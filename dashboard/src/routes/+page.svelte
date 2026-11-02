@@ -95,29 +95,46 @@
 		};
 	}
 
+	import type { PageData } from './$types';
+	let { data }: { data: PageData } = $props();
+
 	// State
 	let status = $state<SystemStatus | null>(null);
-	let workspaces = $state<string[]>([]);
-	let activeWs = $state<string>('Android-Tv');
+	let workspaces = $state<string[]>(data.workspaces || []);
+	let activeWs = $state<string>(data.workspaces?.[0] || 'Android-Tv');
 	let wsDetails = $state<WorkspaceDetails | null>(null);
 
 	// History state
-	let history = $state<TaskRecord[]>([]);
-	let selectedTaskId = $state<string | null>(null);
+	const initHistory = data.history || [];
+	const firstTask = initHistory[0] || null;
+
+	let history = $state<TaskRecord[]>(initHistory);
+	let selectedTaskId = $state<string | null>(firstTask?.id || null);
 	let isLoadingHistory = $state<boolean>(false);
 
-	let prompt = $state<string>('');
+	let prompt = $state<string>(firstTask?.prompt || '');
 	let branch = $state<string>('');
 	let provider = $state<'codex' | 'deepseek' | 'both'>('codex');
 	let isExecuting = $state<boolean>(false);
-	let taskBadge = $state<string>('Ready');
+	let taskBadge = $state<string>(firstTask ? 'Loaded from History' : 'Ready');
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
 
 	// Execution outputs
 	let activeTab = $state<'diff' | 'deepseek_diff' | 'thoughts' | 'logs' | 'files'>('thoughts');
-	let singleResult = $state<TaskResult | null>(null);
-	let dualCodex = $state<TaskResult | null>(null);
-	let dualDeepSeek = $state<TaskResult | null>(null);
+	let singleResult = $state<TaskResult | null>(
+		firstTask && firstTask.mode !== 'both'
+			? {
+					provider: firstTask.provider,
+					branch: firstTask.branch,
+					status: firstTask.status,
+					diff: firstTask.diff,
+					logs: firstTask.logs,
+					tokens: firstTask.tokens
+				}
+			: null
+	);
+	let dualCodex = $state<TaskResult | null>(firstTask?.mode === 'both' ? firstTask.codex : null);
+	let dualDeepSeek = $state<TaskResult | null>(firstTask?.mode === 'both' ? firstTask.deepseek : null);
 
 	// Search & Filter state for logs & thoughts
 	let searchQuery = $state<string>('');
@@ -125,7 +142,18 @@
 	let expandThoughts = $state<boolean>(true);
 
 	// Tokens
-	let tokenStats = $state<TokenStats | null>(null);
+	let tokenStats = $state<TokenStats | null>(
+		firstTask?.tokens
+			? {
+					totalTokens: firstTask.tokens.total_tokens || 0,
+					inputTokens: firstTask.tokens.input_tokens || 0,
+					cachedTokens: firstTask.tokens.cached_input_tokens || 0,
+					outputTokens: firstTask.tokens.output_tokens || 0,
+					sessionCount: initHistory.length,
+					latest: firstTask.tokens
+				}
+			: null
+	);
 
 	// Modal
 	let showCloneModal = $state<boolean>(false);
@@ -453,15 +481,38 @@
 	}
 
 	onMount(async () => {
+		if (data.workspaces && data.workspaces.length > 0) {
+			workspaces = data.workspaces;
+			if (!workspaces.includes(activeWs)) activeWs = data.workspaces[0];
+		}
+		if (data.history && data.history.length > 0) {
+			history = data.history;
+			selectHistoryTask(data.history[0]);
+		}
+
 		fetchStatus();
 		fetchWorkspaces();
-		await fetchHistory(true);
-		const statusInterval = setInterval(fetchStatus, 6000);
-		const historyInterval = setInterval(() => {
-			if (!selectedTaskId && !isExecuting) {
-				fetchHistory(false);
+		if (activeWs) fetchWorkspaceDetails(activeWs);
+
+		const statusInterval = setInterval(fetchStatus, 5000);
+		const historyInterval = setInterval(async () => {
+			if (!isExecuting) {
+				try {
+					const res = await fetch('/api/history');
+					if (res.ok) {
+						const d = await res.json();
+						const newHistory: TaskRecord[] = d.history || [];
+						if (newHistory.length > 0 && (!history.length || newHistory[0].id !== history[0].id)) {
+							history = newHistory;
+							selectHistoryTask(newHistory[0]);
+						} else {
+							history = newHistory;
+						}
+					}
+				} catch (e) {}
 			}
-		}, 8000);
+		}, 4000);
+
 		return () => {
 			clearInterval(statusInterval);
 			clearInterval(historyInterval);
