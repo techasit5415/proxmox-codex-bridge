@@ -27,7 +27,7 @@
 	// State
 	let status = $state<SystemStatus | null>(null);
 	let workspaces = $state<string[]>(initWorkspaces);
-	let activeWs = $state<string>(initWorkspaces[0] || 'Android-Tv');
+	let activeWs = $state<string>('all');
 	let wsDetails = $state<WorkspaceDetails | null>(null);
 
 	// History state
@@ -107,8 +107,19 @@
 	}
 
 	function selectWorkspace(ws: string) {
+		// Toggle: clicking the active workspace again deselects it back to 'all'
+		if (activeWs === ws && ws !== 'all') {
+			activeWs = 'all';
+			wsDetails = null;
+			return;
+		}
+
 		activeWs = ws;
-		fetchWorkspaceDetails(ws);
+		if (ws && ws !== 'all' && ws !== 'auto-temp') {
+			fetchWorkspaceDetails(ws);
+		} else {
+			wsDetails = null;
+		}
 	}
 
 	async function fetchHistory(autoSelectLatest = false) {
@@ -132,9 +143,9 @@
 	function selectHistoryTask(item: TaskRecord) {
 		selectedTaskId = item.id;
 		prompt = item.prompt || '';
+		branch = item.branch || '';
 		
-		if (item.workspace && item.workspace !== activeWs && workspaces.includes(item.workspace)) {
-			activeWs = item.workspace;
+		if (item.workspace && workspaces.includes(item.workspace)) {
 			fetchWorkspaceDetails(item.workspace);
 		}
 
@@ -207,10 +218,11 @@
 		taskBadgeType = 'running';
 
 		try {
+			const targetWs = (activeWs === 'all' || !activeWs) ? 'auto-temp' : activeWs;
 			const res = await fetch('/api/task', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ workspace: activeWs, prompt, branch, provider })
+				body: JSON.stringify({ workspace: targetWs, prompt, branch, provider })
 			});
 			const d = await res.json();
 
@@ -218,7 +230,7 @@
 				taskBadge = 'Completed';
 				taskBadgeType = 'success';
 				
-				if (d.workspace && d.workspace !== activeWs) {
+				if (d.workspace && activeWs !== 'all' && d.workspace !== activeWs) {
 					activeWs = d.workspace;
 					await fetchWorkspaces();
 				}
@@ -384,7 +396,7 @@
 
 <div class="min-h-screen bg-zinc-950 text-zinc-100 antialiased font-sans flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200">
 	<!-- Top Navbar -->
-	<Header {activeWs} {status} {tokenStats} />
+	<Header activeWs={activeWs === 'all' ? 'ทุกโปรเจกต์ (All)' : activeWs} {status} {tokenStats} />
 
 	<!-- Main Workspace Grid -->
 	<div class="flex-1 max-w-7xl w-full mx-auto p-5 flex flex-col lg:flex-row gap-5">
@@ -404,12 +416,14 @@
 				{history} 
 				{selectedTaskId} 
 				isLoading={isLoadingHistory} 
+				{activeWs}
 				onSelectTask={selectHistoryTask} 
 				onRefresh={() => fetchHistory(false)} 
+				onClearWorkspaceFilter={() => selectWorkspace('all')}
 			/>
 
 			<QuickCommand 
-				{activeWs} 
+				activeWs={activeWs === 'all' ? (workspaces.find(w => !w.startsWith('temp-')) || 'demo-project') : activeWs} 
 				onRunCommand={runTerminalCommand} 
 				isRunning={isRunningCmd} 
 			/>

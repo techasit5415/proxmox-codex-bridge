@@ -52,6 +52,20 @@
 		</div>
 
 		<div class="flex flex-col gap-1">
+			<!-- All / Unselected Option -->
+			<button 
+				onclick={() => onSelectWorkspace('all')}
+				class="w-full text-left px-2.5 py-1.5 rounded text-xs font-mono transition flex items-center justify-between cursor-pointer {activeWs === 'all' || !activeWs ? 'bg-cyan-950/40 text-cyan-300 border border-cyan-800/60 font-semibold' : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}"
+			>
+				<span class="truncate flex items-center gap-1.5">
+					<span class="text-cyan-400">🌐</span>
+					<span>ทั้งหมด (ไม่เลือก / ทุก Workspace)</span>
+				</span>
+				{#if activeWs === 'all' || !activeWs}
+					<span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+				{/if}
+			</button>
+
 			<!-- Auto Temp Option -->
 			<button 
 				onclick={() => onSelectWorkspace('auto-temp')}

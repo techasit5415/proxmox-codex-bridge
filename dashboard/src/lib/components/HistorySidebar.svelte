@@ -7,28 +7,50 @@
 		history: TaskRecord[];
 		selectedTaskId: string | null;
 		isLoading: boolean;
+		activeWs?: string;
 		onSelectTask: (item: TaskRecord) => void;
 		onRefresh: () => void;
+		onClearWorkspaceFilter?: () => void;
 	}
 
-	let { history, selectedTaskId, isLoading, onSelectTask, onRefresh }: Props = $props();
+	let { 
+		history, 
+		selectedTaskId, 
+		isLoading, 
+		activeWs = 'all',
+		onSelectTask, 
+		onRefresh,
+		onClearWorkspaceFilter
+	}: Props = $props();
 
 	let historyFilter = $state<'all' | 'codex' | 'deepseek' | 'both' | 'consensus'>('all');
 
+	// Step 1: Filter by Workspace if one is selected
+	let workspaceFilteredHistory = $derived.by(() => {
+		if (!activeWs || activeWs === 'all') return history;
+		if (activeWs === 'auto-temp') {
+			return history.filter(h => h.workspace?.startsWith('temp-'));
+		}
+		return history.filter(h => h.workspace === activeWs);
+	});
+
+	// Step 2: Filter by Model / Mode pills
 	let filteredHistory = $derived.by(() => {
-		if (historyFilter === 'all') return history;
-		if (historyFilter === 'consensus') return history.filter(h => h.mode === 'consensus' || h.provider?.includes('Consensus'));
-		if (historyFilter === 'codex') return history.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek')));
-		if (historyFilter === 'deepseek') return history.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && h.provider?.includes('DeepSeek'));
-		if (historyFilter === 'both') return history.filter(h => h.mode === 'both' || h.provider?.includes('Dual'));
-		return history;
+		const base = workspaceFilteredHistory;
+		if (historyFilter === 'all') return base;
+		if (historyFilter === 'consensus') return base.filter(h => h.mode === 'consensus' || h.provider?.includes('Consensus'));
+		if (historyFilter === 'codex') return base.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek')));
+		if (historyFilter === 'deepseek') return base.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && h.provider?.includes('DeepSeek'));
+		if (historyFilter === 'both') return base.filter(h => h.mode === 'both' || h.provider?.includes('Dual'));
+		return base;
 	});
 
 	function countHistory(type: 'codex' | 'deepseek' | 'both' | 'consensus'): number {
-		if (type === 'consensus') return history.filter(h => h.mode === 'consensus' || h.provider?.includes('Consensus')).length;
-		if (type === 'codex') return history.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek'))).length;
-		if (type === 'deepseek') return history.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && h.provider?.includes('DeepSeek')).length;
-		if (type === 'both') return history.filter(h => h.mode === 'both' || h.provider?.includes('Dual')).length;
+		const base = workspaceFilteredHistory;
+		if (type === 'consensus') return base.filter(h => h.mode === 'consensus' || h.provider?.includes('Consensus')).length;
+		if (type === 'codex') return base.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek'))).length;
+		if (type === 'deepseek') return base.filter(h => h.mode !== 'both' && h.mode !== 'consensus' && !h.provider?.includes('Dual') && !h.provider?.includes('Consensus') && h.provider?.includes('DeepSeek')).length;
+		if (type === 'both') return base.filter(h => h.mode === 'both' || h.provider?.includes('Dual')).length;
 		return 0;
 	}
 
@@ -57,10 +79,22 @@
 
 <div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 flex flex-col gap-2">
 	<div class="flex items-center justify-between text-xs">
-		<div class="flex items-center gap-1.5 text-zinc-400 font-medium">
-			<History class="w-3.5 h-3.5 text-zinc-500" />
-			<span>History</span>
-			<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono">{filteredHistory.length}</span>
+		<div class="flex items-center gap-1.5 text-zinc-400 font-medium overflow-hidden">
+			<History class="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+			<span class="shrink-0">History</span>
+			{#if activeWs && activeWs !== 'all'}
+				<span class="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono truncate max-w-[75px]" title="กรองตาม: {activeWs}">
+					{activeWs === 'auto-temp' ? 'temp-*' : activeWs}
+				</span>
+				{#if onClearWorkspaceFilter}
+					<button 
+						onclick={onClearWorkspaceFilter}
+						title="ล้างตัวกรอง Workspace (ดูทั้งหมด)"
+						class="text-[9px] text-zinc-500 hover:text-zinc-200 transition cursor-pointer shrink-0"
+					>✕</button>
+				{/if}
+			{/if}
+			<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono shrink-0">{filteredHistory.length}</span>
 		</div>
 		<button 
 			onclick={onRefresh}
@@ -127,7 +161,23 @@
 				</div>
 			</button>
 		{:else}
-			<div class="text-[11px] text-zinc-600 italic py-2 text-center">No past runs matching filter.</div>
+			<div class="text-[11px] text-zinc-500 italic py-3 text-center flex flex-col items-center gap-1">
+				<span>
+					{#if activeWs && activeWs !== 'all'}
+						ไม่มีประวัติใน {activeWs === 'auto-temp' ? 'Auto Temp' : activeWs}
+					{:else}
+						ไม่มีประวัติที่ตรงกับตัวกรอง
+					{/if}
+				</span>
+				{#if activeWs && activeWs !== 'all' && onClearWorkspaceFilter}
+					<button 
+						onclick={onClearWorkspaceFilter}
+						class="text-[10px] text-cyan-400 hover:underline cursor-pointer"
+					>
+						ดูประวัติของทุก Workspace
+					</button>
+				{/if}
+			</div>
 		{/each}
 	</div>
 </div>
