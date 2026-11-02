@@ -22,7 +22,6 @@
 	// Initialize directly from SSR PageData so server-rendered HTML contains all items
 	const initWorkspaces = data.workspaces || [];
 	const initHistory = data.history || [];
-	const firstTask = initHistory[0] || null;
 
 	// State
 	let status = $state<SystemStatus | null>(null);
@@ -32,42 +31,29 @@
 
 	// History state
 	let history = $state<TaskRecord[]>(initHistory);
-	let selectedTaskId = $state<string | null>(firstTask?.id || null);
+	let selectedTaskId = $state<string | null>(null);
 	let isLoadingHistory = $state<boolean>(false);
 
-	let prompt = $state<string>(firstTask?.prompt || '');
+	let prompt = $state<string>('');
 	let branch = $state<string>('');
-	let provider = $state<'codex' | 'deepseek' | 'both'>(
-		firstTask?.mode === 'both' ? 'both' : (firstTask?.provider?.includes('DeepSeek') ? 'deepseek' : 'codex')
-	);
+	let provider = $state<'codex' | 'deepseek' | 'both'>('codex');
 	let isExecuting = $state<boolean>(false);
-	let taskBadge = $state<string>(firstTask ? 'Loaded from History' : 'Ready');
+	let taskBadge = $state<string>('Ready');
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
 
 	// Execution outputs
-	let singleResult = $state<TaskResult | null>(
-		firstTask && firstTask.mode !== 'both'
-			? {
-					provider: firstTask.provider,
-					branch: firstTask.branch,
-					status: firstTask.status,
-					diff: firstTask.diff,
-					logs: firstTask.logs,
-					tokens: firstTask.tokens
-				}
-			: null
-	);
-	let dualCodex = $state<TaskResult | null>(firstTask?.mode === 'both' ? (firstTask.codex || null) : null);
-	let dualDeepSeek = $state<TaskResult | null>(firstTask?.mode === 'both' ? (firstTask.deepseek || null) : null);
+	let singleResult = $state<TaskResult | null>(null);
+	let dualCodex = $state<TaskResult | null>(null);
+	let dualDeepSeek = $state<TaskResult | null>(null);
 	let tokenStats = $state<TokenStats | null>(
-		firstTask?.tokens
+		initHistory[0]?.tokens
 			? {
-					totalTokens: firstTask.tokens.total_tokens || 0,
-					inputTokens: firstTask.tokens.input_tokens || 0,
-					cachedTokens: firstTask.tokens.cached_input_tokens || 0,
-					outputTokens: firstTask.tokens.output_tokens || 0,
+					totalTokens: initHistory[0].tokens.total_tokens || 0,
+					inputTokens: initHistory[0].tokens.input_tokens || 0,
+					cachedTokens: initHistory[0].tokens.cached_input_tokens || 0,
+					outputTokens: initHistory[0].tokens.output_tokens || 0,
 					sessionCount: initHistory.length,
-					latest: firstTask.tokens
+					latest: initHistory[0].tokens
 				}
 			: null
 	);
