@@ -7,7 +7,7 @@ import fs from 'fs';
 import { saveTaskToHistory } from '../../../lib/history';
 import { detectTaskType } from '../../../lib/types';
 import type { AIModelConfig, TaskResult } from '../../../lib/types';
-import { getModels } from '../models/+server';
+import { getModels } from '../../../lib/models';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
