@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { AIModelConfig } from '$lib/types';
-import { getModels, saveModels } from '$lib/models';
+import type { AIModelConfig } from '../../../lib/types';
+import { getModels, saveModels } from '../../../lib/models';
 
 export const GET: RequestHandler = async () => {
 	const models = getModels();
