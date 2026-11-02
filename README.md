@@ -179,6 +179,119 @@ npm run build
 
 ---
 
+## 📦 คู่มือการย้ายเครื่อง (Migration Guide)
+
+หากต้องการย้ายระบบไปยังเครื่องใหม่ สามารถทำตามขั้นตอนด้านล่างตามกรณีการใช้งาน:
+
+### กรณีที่ 1: ย้าย "เครื่องคอมพิวเตอร์ผู้พัฒนา" (Client PC / Laptop ใหม่)
+*(ตัว Proxmox LXC Container ยังอยู่ที่เดิม IP `192.168.5.159` แต่ต้องการใช้งาน Antigravity จากเครื่องใหม่)*
+
+ทำเพียง 4 สเต็ปบนเครื่องใหม่:
+
+#### 1. ตั้งค่า SSH Key ให้เข้า Proxmox โดยไม่ต้องใช้รหัสผ่าน
+เปิด PowerShell หรือ Terminal บนเครื่องใหม่:
+```bash
+# 1.1 สร้าง SSH Key (หากยังไม่มี)
+ssh-keygen -t ed25519
+
+# 1.2 ส่ง Public Key ไปยัง Proxmox CT
+# สำหรับ Windows (PowerShell):
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@192.168.5.159 "cat >> ~/.ssh/authorized_keys"
+
+# สำหรับ macOS / Linux:
+ssh-copy-id root@192.168.5.159
+
+# 1.3 ทดสอบการเชื่อมต่อ (ต้องเข้าได้ทันทีโดยไม่ถามรหัสผ่าน)
+ssh -T root@192.168.5.159 "echo Proxmox Connected OK"
+```
+
+#### 2. ใส่การตั้งค่า MCP Server
+สร้างหรือแก้ไขไฟล์ `~/.gemini/config/mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "proxmox-agent": {
+      "command": "ssh",
+      "args": [
+        "-T",
+        "root@192.168.5.159",
+        "node",
+        "/opt/agent-bridge/server.mjs"
+      ]
+    }
+  }
+}
+```
+
+#### 3. ติดตั้ง Global Anti-Hallucination Rules
+สร้างไฟล์ `~/.gemini/config/rules/proxmox-codex-bridge.md` และคัดลอกไปยัง `~/.gemini/config/AGENTS.md` เพื่อบังคับให้ Antigravity เรียกโมเดลจริงเสมอ:
+```markdown
+# Proxmox Codex Bridge & Multi-Agent Guidelines
+
+## External Models Integration
+When the user mentions or asks for:
+- "ChatGPT" / "Codex" / "gpt-6.1-sol"
+- "DeepSeek" / "DeepSeek R1"
+- "ทั้ง 3 ตัว" / "3 โมเดล" / "ช่วยกันคิด"
+- "เปรียบเทียบ" / "Dual mode" / "run_dual_task"
+
+### CRITICAL RULES:
+1. NEVER ROLEPLAY OR FABRICATE RESPONSES:
+   - Do NOT simulate or pretend to be ChatGPT or DeepSeek.
+2. ALWAYS USE THE PROXMOX-AGENT MCP SERVER:
+   - To query both models: call `call_mcp_tool` with `ServerName: "proxmox-agent"` and `ToolName: "run_dual_task"`.
+   - To query Codex only: call `run_codex_task`.
+   - To query DeepSeek only: call `run_deepseek_task`.
+3. REPORT REAL LOGS & OUTPUTS from `http://192.168.5.159:3000`.
+4. HONEST STATUS REPORTING:
+   - If an API or tool call fails or times out, report the exact error honestly.
+```
+
+#### 4. โคลน Repository โค้ด
+```bash
+git clone https://github.com/techasit5415/proxmox-codex-bridge.git
+```
+
+---
+
+### กรณีที่ 2: ย้าย "Proxmox Server" ไปยังเครื่องแม่ข่ายเครื่องใหม่
+*(ย้ายตัว LXC Container ทั้งระบบไปยัง Node หรือ Proxmox VE ตัวใหม่)*
+
+#### วิธีที่ 1: ใช้ Proxmox Backup & Restore (VZDump) — แนะนำและสมบูรณ์ที่สุด ⭐
+1. **บน Proxmox VE โหนดเดิม:**
+   * ไปที่ Web GUI -> เลือก Container (LXC) ตัว Bridge -> คลิกเมนู **Backup** -> กด **Backup now** (บีบอัดเป็น `.tar.zst`)
+2. **คัดลอกไฟล์ Backup ข้ามเครื่อง:**
+   ```bash
+   scp /var/lib/vz/dump/vzdump-lxc-*.tar.zst root@<IP_PROXMOX_ใหม่>:/var/lib/vz/dump/
+   ```
+3. **บน Proxmox VE โหนดใหม่:**
+   * ไปที่ Storage `local` -> เลือกเมนู **Backups** -> เลือกไฟล์แล้วกด **Restore**
+   * กำหนด Static IP ให้เป็น `192.168.5.159` เท่านี้ทั้ง Systemd service, Codex CLI authentication, และ Node.js environment จะทำงานต่อได้ทันที 100%
+
+#### วิธีที่ 2: ติดตั้งใหม่จาก Git บน Container ใหม่ (Clean Setup)
+1. สร้าง Debian/Ubuntu LXC Container ใหม่
+2. ติดตั้ง Node.js 20+, Python 3, และ Git:
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+   apt-get install -y nodejs git python3 python3-pip
+   npm install -g @openai/codex
+   ```
+3. โคลนโค้ดและบิลด์ระบบ:
+   ```bash
+   git clone https://github.com/techasit5415/proxmox-codex-bridge.git /opt/agent-bridge
+   cd /opt/agent-bridge/dashboard
+   npm install
+   npm run build
+   ```
+4. ติดตั้ง Systemd Service สำหรับรันเว็บและ API:
+   ```bash
+   # สร้าง /etc/systemd/system/agent-web.service
+   systemctl daemon-reload
+   systemctl enable --now agent-web.service
+   ```
+
+---
+
 ## 📝 บันทึกประวัติการพัฒนา (Changelog)
 
 * **v2.2.0 (ล่าสุด):**
