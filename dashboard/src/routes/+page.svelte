@@ -7,7 +7,8 @@
 		TaskRecord, 
 		TaskResult, 
 		ConsensusData,
-		TokenStats 
+		TokenStats,
+		AIModelConfig
 	} from '../lib/types';
 
 	import Header from '../lib/components/Header.svelte';
@@ -17,6 +18,7 @@
 	import TaskInput from '../lib/components/TaskInput.svelte';
 	import ResultsViewer from '../lib/components/ResultsViewer.svelte';
 	import CloneModal from '../lib/components/CloneModal.svelte';
+	import SettingsModal from '../lib/components/SettingsModal.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -29,6 +31,8 @@
 	let workspaces = $state<string[]>(initWorkspaces);
 	let activeWs = $state<string>('all');
 	let wsDetails = $state<WorkspaceDetails | null>(null);
+	let models = $state<AIModelConfig[]>([]);
+	let showSettingsModal = $state<boolean>(false);
 
 	// History state
 	let history = $state<TaskRecord[]>(initHistory);
@@ -103,6 +107,18 @@
 			if (res.ok) wsDetails = await res.json();
 		} catch (e) {
 			console.error(e);
+		}
+	}
+
+	async function fetchModels() {
+		try {
+			const res = await fetch('/api/models');
+			if (res.ok) {
+				const d = await res.json();
+				models = d.models || [];
+			}
+		} catch (e) {
+			console.error('Failed to fetch models:', e);
 		}
 	}
 
@@ -369,6 +385,7 @@
 
 		fetchStatus();
 		fetchWorkspaces();
+		fetchModels();
 		if (activeWs && activeWs !== 'auto-temp') fetchWorkspaceDetails(activeWs);
 
 		const statusInterval = setInterval(() => {
@@ -396,7 +413,12 @@
 
 <div class="min-h-screen bg-zinc-950 text-zinc-100 antialiased font-sans flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200">
 	<!-- Top Navbar -->
-	<Header activeWs={activeWs === 'all' ? 'ทุกโปรเจกต์ (All)' : activeWs} {status} {tokenStats} />
+	<Header 
+		activeWs={activeWs === 'all' ? 'ทุกโปรเจกต์ (All)' : activeWs} 
+		{status} 
+		{tokenStats} 
+		onOpenSettings={() => (showSettingsModal = true)}
+	/>
 
 	<!-- Main Workspace Grid -->
 	<div class="flex-1 max-w-7xl w-full mx-auto p-5 flex flex-col lg:flex-row gap-5">
@@ -435,6 +457,7 @@
 				bind:prompt 
 				bind:branch 
 				bind:provider 
+				{models}
 				{selectedTaskId} 
 				{isExecuting} 
 				onExecute={executeTask} 
@@ -460,5 +483,13 @@
 		onClose={() => (showCloneModal = false)} 
 		onClone={handleClone} 
 		{isCloning} 
+	/>
+
+	<!-- AI Models & API Settings Modal -->
+	<SettingsModal 
+		isOpen={showSettingsModal} 
+		{models} 
+		onClose={() => (showSettingsModal = false)} 
+		onModelsUpdated={fetchModels} 
 	/>
 </div>

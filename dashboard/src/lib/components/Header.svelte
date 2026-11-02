@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ExternalLink } from 'lucide-svelte';
+	import { ExternalLink, Settings } from 'lucide-svelte';
 	import type { SystemStatus, TokenStats } from '../types';
 	import { fmtTokens } from '../types';
 
@@ -7,9 +7,10 @@
 		activeWs: string;
 		status: SystemStatus | null;
 		tokenStats: TokenStats | null;
+		onOpenSettings?: () => void;
 	}
 
-	let { activeWs, status, tokenStats }: Props = $props();
+	let { activeWs, status, tokenStats, onOpenSettings }: Props = $props();
 </script>
 
 <header class="border-b border-zinc-800 bg-zinc-950 px-5 py-3 flex items-center justify-between text-xs">
@@ -42,6 +43,17 @@
 			<span class="text-zinc-500">RAM:</span>
 			<span>{status?.memoryUsage || '...'}</span>
 		</div>
+
+		{#if onOpenSettings}
+			<button 
+				onclick={onOpenSettings}
+				class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 transition cursor-pointer font-sans"
+				title="ตั้งค่า AI Models (Claude, OpenAI, Gemini)"
+			>
+				<Settings class="w-3.5 h-3.5 text-amber-400" />
+				<span class="font-medium">Models (Settings)</span>
+			</button>
+		{/if}
 
 		<a 
 			href="https://github.com/techasit5415/proxmox-codex-bridge" 

@@ -170,3 +170,18 @@ export function extractThoughtAndBody(raw: string): { thoughts: string; body: st
 
 	return { thoughts: '', body: raw };
 }
+
+export interface AIModelConfig {
+	id: string;
+	name: string;
+	type: 'cli' | 'anthropic' | 'openai-compatible' | 'ollama';
+	endpoint?: string;
+	apiKey?: string;
+	modelId?: string;
+	badge?: string;
+	color?: string;
+	active: boolean;
+	inConsensus: boolean;
+	isBuiltin?: boolean;
+}
+

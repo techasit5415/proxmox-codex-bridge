@@ -6,6 +6,8 @@ import path from 'path';
 import fs from 'fs';
 import { saveTaskToHistory } from '../../../lib/history';
 import { detectTaskType } from '../../../lib/types';
+import type { AIModelConfig, TaskResult } from '../../../lib/types';
+import { getModels } from '../models/+server';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
@@ -308,6 +310,151 @@ Do not output git diff markers directly, just output the complete file contents 
 			input_tokens: promptTokens,
 			cached_input_tokens: cachedTokens,
 			output_tokens: completionTokens
+		}
+	};
+}
+
+async function runCustomModelTask(
+	modelConfig: AIModelConfig,
+	target: string,
+	prompt: string,
+	branch: string
+): Promise<TaskResult> {
+	const taskType = detectTaskType(prompt);
+	let fileList = '';
+	try {
+		const { stdout } = await execAsync('git ls-files', { cwd: target });
+		fileList = stdout.trim().split('\n').slice(0, 50).join('\n');
+	} catch (e) {}
+
+	const systemPrompt = taskType === 'general'
+		? `You are an expert AI assistant and advisor. Provide a clear, detailed, and structured response in the requested language (e.g. Thai).`
+		: `You are an expert software engineer. Given a user task and workspace files, generate the necessary code changes.
+For each file you create or modify, format your response strictly using this syntax:
+file:path/to/file.ext
+\`\`\`language
+<complete file content here>
+\`\`\`
+Do not output git diff markers directly, just output the complete file contents inside the file: block.`;
+
+	const userContent = taskType === 'general'
+		? prompt
+		: `Workspace files:\n${fileList}\n\nTask:\n${prompt}`;
+
+	let reply = '';
+	let thinking = '';
+	let totalTokens = 0;
+
+	if (modelConfig.type === 'anthropic') {
+		const res = await fetch('https://api.anthropic.com/v1/messages', {
+			method: 'POST',
+			headers: {
+				'x-api-key': modelConfig.apiKey || '',
+				'anthropic-version': '2023-06-01',
+				'content-type': 'application/json'
+			},
+			body: JSON.stringify({
+				model: modelConfig.modelId || 'claude-3-5-sonnet-20241022',
+				max_tokens: 4096,
+				system: systemPrompt,
+				messages: [{ role: 'user', content: userContent }]
+			})
+		});
+		if (!res.ok) {
+			const errText = await res.text().catch(() => '');
+			throw new Error(`Anthropic API Error (${res.status}): ${errText}`);
+		}
+		const data = await res.json();
+		for (const block of data.content || []) {
+			if (block.type === 'text') reply += block.text;
+			if (block.type === 'thinking') thinking += block.thinking;
+		}
+		totalTokens = (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
+	} else if (modelConfig.type === 'openai-compatible') {
+		const endpoint = modelConfig.endpoint || 'https://api.openai.com/v1/chat/completions';
+		const res = await fetch(endpoint, {
+			method: 'POST',
+			headers: {
+				'Authorization': `Bearer ${modelConfig.apiKey || ''}`,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				model: modelConfig.modelId || 'gpt-4o',
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userContent }
+				]
+			})
+		});
+		if (!res.ok) {
+			const errText = await res.text().catch(() => '');
+			throw new Error(`API Error (${res.status}): ${errText}`);
+		}
+		const data = await res.json();
+		reply = data.choices?.[0]?.message?.content || '';
+		totalTokens = data.usage?.total_tokens || 0;
+	} else if (modelConfig.type === 'ollama') {
+		const endpoint = modelConfig.endpoint || 'http://localhost:11434/api/chat';
+		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+		if (modelConfig.apiKey) headers['Authorization'] = `Bearer ${modelConfig.apiKey}`;
+		const res = await fetch(endpoint, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				model: modelConfig.modelId,
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userContent }
+				],
+				stream: false
+			})
+		});
+		if (!res.ok) {
+			const errText = await res.text().catch(() => '');
+			throw new Error(`Ollama Error (${res.status}): ${errText}`);
+		}
+		const data = await res.json();
+		reply = data.message?.content || '';
+		if (data.message?.thinking) thinking = data.message.thinking;
+		totalTokens = (data.prompt_eval_count || 0) + (data.eval_count || 0);
+	}
+
+	let diff = '';
+	if (taskType === 'code') {
+		const fileRegex = /file:([^\n]+)\s*```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g;
+		let match;
+		const writtenFiles: string[] = [];
+		while ((match = fileRegex.exec(reply)) !== null) {
+			const filePath = match[1].trim();
+			const fileContent = match[2];
+			const fullPath = path.join(target, filePath);
+			fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+			fs.writeFileSync(fullPath, fileContent, 'utf8');
+			writtenFiles.push(filePath);
+		}
+		if (writtenFiles.length > 0) {
+			try {
+				await execAsync(`git checkout -b ${branch}`, { cwd: target });
+			} catch (e) {}
+			await execAsync('git add -A', { cwd: target });
+			await execAsync(`git commit -m "${modelConfig.name}: ${prompt.slice(0, 50)}"`, { cwd: target });
+			const { stdout: diffOut } = await execAsync('git diff HEAD~1 HEAD', { cwd: target });
+			diff = diffOut;
+		}
+	}
+
+	const thinkSection = thinking ? `<think>\n${thinking}\n</think>\n\n` : '';
+	return {
+		provider: modelConfig.name,
+		branch,
+		status: 'Success',
+		diff,
+		logs: (thinkSection + reply).trim(),
+		tokens: {
+			total_tokens: totalTokens,
+			input_tokens: 0,
+			cached_input_tokens: 0,
+			output_tokens: totalTokens
 		}
 	};
 }
@@ -633,6 +780,26 @@ ${codexReviewOfDeepSeek.slice(0, 3500)}
 					output_tokens: outputTokens
 				}
 			});
+		}
+
+		// Check for Registered Custom Models (Claude, Gemini, Ollama, etc.)
+		const allModels = getModels();
+		const matchedModel = allModels.find(m => m.id === provider);
+		if (matchedModel && !matchedModel.isBuiltin) {
+			const taskBranch = branch?.trim() || `agent/${matchedModel.id}-${timestamp}`;
+			const result = await runCustomModelTask(matchedModel, target, prompt, taskBranch);
+			saveTaskToHistory({
+				workspace: activeWorkspace,
+				prompt,
+				provider: result.provider,
+				branch: result.branch,
+				status: result.status,
+				diff: result.diff,
+				logs: result.logs,
+				tokens: result.tokens,
+				mode: 'single'
+			});
+			return json({ success: true, workspace: activeWorkspace, mode: 'single', ...result });
 		}
 
 		// Default: Codex Only

@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { Play, RefreshCw, Layers, Clock, Plus, Code, Sparkles } from 'lucide-svelte';
 	import { detectTaskType } from '../types';
+	import type { AIModelConfig } from '../types';
 
 	interface Props {
 		prompt: string;
 		branch: string;
-		provider: 'codex' | 'deepseek' | 'both' | 'consensus';
+		provider: string;
+		models?: AIModelConfig[];
 		selectedTaskId: string | null;
 		isExecuting: boolean;
 		onExecute: () => void;
@@ -16,11 +18,14 @@
 		prompt = $bindable(),
 		branch = $bindable(),
 		provider = $bindable(),
+		models = [],
 		selectedTaskId,
 		isExecuting,
 		onExecute,
 		onClearSelected
 	}: Props = $props();
+
+	let activeModels = $derived(models.filter(m => m.active));
 
 	function handleKeydown(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -64,19 +69,31 @@
 		</div>
 
 		<!-- Segmented Control: Choose Provider -->
-		<div class="flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-[11px] font-medium">
-			<button 
-				onclick={() => (provider = 'codex')}
-				class="px-2.5 py-1 rounded transition cursor-pointer {provider === 'codex' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
-			>
-				Codex (ChatGPT)
-			</button>
-			<button 
-				onclick={() => (provider = 'deepseek')}
-				class="px-2.5 py-1 rounded transition cursor-pointer {provider === 'deepseek' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
-			>
-				DeepSeek R1 (GPU)
-			</button>
+		<div class="flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-[11px] font-medium flex-wrap gap-0.5">
+			{#if activeModels.length > 0}
+				{#each activeModels as m}
+					<button 
+						onclick={() => (provider = m.id)}
+						class="px-2.5 py-1 rounded transition cursor-pointer {provider === m.id ? 'bg-zinc-800 text-zinc-100 font-semibold border border-zinc-700' : 'text-zinc-500 hover:text-zinc-300'}"
+					>
+						{m.badge || m.name}
+					</button>
+				{/each}
+			{:else}
+				<button 
+					onclick={() => (provider = 'codex')}
+					class="px-2.5 py-1 rounded transition cursor-pointer {provider === 'codex' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+				>
+					Codex (ChatGPT)
+				</button>
+				<button 
+					onclick={() => (provider = 'deepseek')}
+					class="px-2.5 py-1 rounded transition cursor-pointer {provider === 'deepseek' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+				>
+					DeepSeek R1
+				</button>
+			{/if}
+
 			<button 
 				onclick={() => (provider = 'both')}
 				class="px-2.5 py-1 rounded transition flex items-center gap-1 cursor-pointer {provider === 'both' ? 'bg-indigo-600 text-white font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
