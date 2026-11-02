@@ -111,6 +111,7 @@
 	let history = $state<TaskRecord[]>(initHistory);
 	let selectedTaskId = $state<string | null>(firstTask?.id || null);
 	let isLoadingHistory = $state<boolean>(false);
+	let historyFilter = $state<'all' | 'codex' | 'deepseek' | 'both'>('all');
 
 	let prompt = $state<string>(firstTask?.prompt || '');
 	let branch = $state<string>('');
@@ -119,8 +120,9 @@
 	let taskBadge = $state<string>(firstTask ? 'Loaded from History' : 'Ready');
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
 
-	// Execution outputs
+	// Execution outputs & Model Views
 	let activeTab = $state<'diff' | 'deepseek_diff' | 'thoughts' | 'logs' | 'files'>('thoughts');
+	let activeModelView = $state<'split' | 'codex' | 'deepseek'>(firstTask?.mode === 'both' ? 'split' : (firstTask?.provider?.includes('DeepSeek') ? 'deepseek' : 'codex'));
 	let singleResult = $state<TaskResult | null>(
 		firstTask && firstTask.mode !== 'both'
 			? {
@@ -140,6 +142,24 @@
 	let searchQuery = $state<string>('');
 	let logFilter = $state<'all' | 'thoughts' | 'exec' | 'error'>('all');
 	let expandThoughts = $state<boolean>(false);
+	let expandCodexDiff = $state<boolean>(false);
+	let expandDeepSeekDiff = $state<boolean>(false);
+
+	// Computed filtered history based on active filter pill
+	let filteredHistory = $derived.by(() => {
+		if (historyFilter === 'all') return history;
+		if (historyFilter === 'codex') return history.filter(h => h.mode !== 'both' && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek')));
+		if (historyFilter === 'deepseek') return history.filter(h => h.mode !== 'both' && h.provider?.includes('DeepSeek'));
+		if (historyFilter === 'both') return history.filter(h => h.mode === 'both' || h.provider?.includes('Dual'));
+		return history;
+	});
+
+	function countHistory(type: 'codex' | 'deepseek' | 'both'): number {
+		if (type === 'codex') return history.filter(h => h.mode !== 'both' && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek'))).length;
+		if (type === 'deepseek') return history.filter(h => h.mode !== 'both' && h.provider?.includes('DeepSeek')).length;
+		if (type === 'both') return history.filter(h => h.mode === 'both' || h.provider?.includes('Dual')).length;
+		return 0;
+	}
 
 	// Tokens
 	let tokenStats = $state<TokenStats | null>(
@@ -241,6 +261,7 @@
 			dualDeepSeek = item.deepseek;
 			singleResult = null;
 			provider = 'both';
+			activeModelView = 'split';
 		} else {
 			singleResult = {
 				provider: item.provider,
@@ -254,8 +275,10 @@
 			dualDeepSeek = null;
 			if (item.provider?.includes('DeepSeek')) {
 				provider = 'deepseek';
+				activeModelView = 'deepseek';
 			} else {
 				provider = 'codex';
+				activeModelView = 'codex';
 			}
 		}
 
@@ -319,10 +342,12 @@
 					dualCodex = data.codex;
 					dualDeepSeek = data.deepseek;
 					singleResult = null;
+					activeModelView = 'split';
 				} else {
 					singleResult = data;
 					dualCodex = null;
 					dualDeepSeek = null;
+					activeModelView = provider === 'deepseek' ? 'deepseek' : 'codex';
 				}
 
 				activeTab = 'thoughts';
@@ -624,7 +649,7 @@
 				<div class="flex items-center gap-1.5 text-zinc-400 font-medium">
 					<History class="w-3.5 h-3.5 text-zinc-500" />
 					<span>History</span>
-					<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono">{history.length}</span>
+					<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono">{filteredHistory.length}</span>
 				</div>
 				<button 
 					onclick={() => fetchHistory(false)}
@@ -635,8 +660,36 @@
 				</button>
 			</div>
 
+			<!-- Quick Model Filter Pills -->
+			<div class="grid grid-cols-4 gap-1 p-0.5 bg-zinc-950/80 rounded-md border border-zinc-800/80 text-[10px] font-mono">
+				<button 
+					onclick={() => (historyFilter = 'all')}
+					class="py-0.5 rounded transition text-center {historyFilter === 'all' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+				>
+					All ({history.length})
+				</button>
+				<button 
+					onclick={() => (historyFilter = 'codex')}
+					class="py-0.5 rounded transition text-center {historyFilter === 'codex' ? 'bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700' : 'text-zinc-500 hover:text-zinc-300'}"
+				>
+					Codex ({countHistory('codex')})
+				</button>
+				<button 
+					onclick={() => (historyFilter = 'deepseek')}
+					class="py-0.5 rounded transition text-center {historyFilter === 'deepseek' ? 'bg-violet-950 text-violet-300 border border-violet-800 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+				>
+					R1 ({countHistory('deepseek')})
+				</button>
+				<button 
+					onclick={() => (historyFilter = 'both')}
+					class="py-0.5 rounded transition text-center {historyFilter === 'both' ? 'bg-indigo-950 text-indigo-300 border border-indigo-800 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+				>
+					Dual ({countHistory('both')})
+				</button>
+			</div>
+
 			<div class="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-0.5">
-				{#each history as item}
+				{#each filteredHistory as item}
 					<button
 						onclick={() => selectHistoryTask(item)}
 						class="w-full text-left p-2 rounded text-xs transition border flex flex-col gap-1 {selectedTaskId === item.id ? 'bg-zinc-800 border-zinc-700 text-zinc-100 shadow-xs' : 'bg-zinc-950/40 border-zinc-900 text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}"
@@ -888,69 +941,306 @@
 			<div class="p-3.5 flex-1 overflow-auto bg-zinc-950 font-mono text-xs">
 				<!-- RESPONSE & REASONING TAB -->
 				{#if activeTab === 'thoughts'}
-					{@const logs = getActiveRawLogs()}
-					{@const parsed = extractThoughtAndBody(logs)}
-					
-					<div class="flex flex-col gap-3 font-sans text-xs">
-						<!-- Model Thinking Card (Collapsible) -->
-						{#if parsed.thoughts}
-							<div class="rounded-lg border border-violet-900/50 bg-violet-950/25 p-3 flex flex-col gap-2 font-mono">
-								<button 
-									onclick={() => (expandThoughts = !expandThoughts)}
-									class="flex items-center justify-between text-violet-300 text-xs font-semibold cursor-pointer select-none"
-								>
-									<div class="flex items-center gap-2">
-										<Brain class="w-4 h-4 text-violet-400" />
-										<span>Chain of Thought (กระบวนการคิด)</span>
-										<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300 border border-violet-800/60 font-mono">
-											{parsed.thoughts.length.toLocaleString()} chars
-										</span>
+					{#if dualCodex && dualDeepSeek}
+						<!-- Dual Model Switcher Toolbar -->
+						<div class="mb-3.5 flex items-center justify-between gap-3 p-2 bg-zinc-900/60 rounded-lg border border-zinc-800 text-xs font-mono flex-wrap">
+							<div class="flex items-center gap-2">
+								<span class="text-zinc-400 text-[11px] font-sans">Model View:</span>
+								<div class="flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-[11px]">
+									<button 
+										onclick={() => (activeModelView = 'split')}
+										class="px-2.5 py-1 rounded transition flex items-center gap-1.5 {activeModelView === 'split' ? 'bg-indigo-600 text-white font-semibold shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}"
+									>
+										<Layers class="w-3 h-3" />
+										<span>Side-by-Side (Compare)</span>
+									</button>
+									<button 
+										onclick={() => (activeModelView = 'codex')}
+										class="px-2.5 py-1 rounded transition flex items-center gap-1.5 {activeModelView === 'codex' ? 'bg-zinc-800 text-emerald-300 font-semibold border border-zinc-700 shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}"
+									>
+										<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+										<span>Codex</span>
+									</button>
+									<button 
+										onclick={() => (activeModelView = 'deepseek')}
+										class="px-2.5 py-1 rounded transition flex items-center gap-1.5 {activeModelView === 'deepseek' ? 'bg-violet-950 text-violet-300 border border-violet-800 font-semibold shadow-xs' : 'text-zinc-400 hover:text-zinc-200'}"
+									>
+										<span class="w-1.5 h-1.5 rounded-full bg-violet-400"></span>
+										<span>DeepSeek R1</span>
+									</button>
+								</div>
+							</div>
+
+							<!-- Quick Tokens Summary -->
+							<div class="flex items-center gap-2 text-[11px]">
+								<span class="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-emerald-400">
+									Codex: {fmt(dualCodex.tokens?.total_tokens)} tok
+								</span>
+								<span class="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-violet-400">
+									DeepSeek: {fmt(dualDeepSeek.tokens?.total_tokens)} tok
+								</span>
+							</div>
+						</div>
+
+						<!-- View: Side-by-Side Split -->
+						{#if activeModelView === 'split'}
+							{@const dsParsed = extractThoughtAndBody(dualDeepSeek.logs)}
+							{@const codexParsed = extractThoughtAndBody(dualCodex.logs)}
+							<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 font-sans text-xs">
+								<!-- LEFT: Codex Column -->
+								<div class="flex flex-col gap-2.5">
+									<div class="p-2.5 rounded-t-lg bg-zinc-900 border border-zinc-800 flex items-center justify-between font-mono">
+										<div class="flex items-center gap-2">
+											<span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+											<span class="font-bold text-zinc-100 text-xs">Codex (gpt-6.1-sol)</span>
+											<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">{dualCodex.branch}</span>
+										</div>
+										<span class="text-[11px] text-zinc-400">{fmt(dualCodex.tokens?.total_tokens)} tok</span>
 									</div>
-									<div class="flex items-center gap-1 text-[11px] text-violet-400 font-medium">
-										<span>{expandThoughts ? 'Collapse' : 'Expand Thoughts'}</span>
+
+									<div class="rounded-b-lg border-x border-b border-zinc-800 bg-zinc-900/40 p-3.5 flex flex-col gap-2">
+										<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+											{codexParsed.body || dualCodex.logs || '(No output recorded)'}
+										</div>
+									</div>
+
+									{#if dualCodex.diff && dualCodex.diff !== '(No tracked files modified)'}
+										<div class="rounded-lg border border-zinc-800 bg-zinc-950 p-2.5 font-mono">
+											<button 
+												onclick={() => (expandCodexDiff = !expandCodexDiff)}
+												class="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-zinc-200 cursor-pointer"
+											>
+												<span class="font-medium text-emerald-400">Git Diff ({dualCodex.branch})</span>
+												<div class="flex items-center gap-1 text-[11px]">
+													<span>{expandCodexDiff ? 'Hide Diff' : 'View Diff'}</span>
+													<ChevronDown class="w-3.5 h-3.5 {expandCodexDiff ? 'rotate-180' : ''} transition-transform" />
+												</div>
+											</button>
+											{#if expandCodexDiff}
+												<pre class="mt-2 text-[11px] text-zinc-300 whitespace-pre-wrap overflow-x-auto max-h-60 p-2 bg-zinc-900/70 rounded border border-zinc-800">{dualCodex.diff}</pre>
+											{/if}
+										</div>
+									{/if}
+								</div>
+
+								<!-- RIGHT: DeepSeek R1 Column -->
+								<div class="flex flex-col gap-2.5">
+									<div class="p-2.5 rounded-t-lg bg-violet-950/60 border border-violet-900/60 flex items-center justify-between font-mono">
+										<div class="flex items-center gap-2">
+											<span class="w-2 h-2 rounded-full bg-violet-400"></span>
+											<span class="font-bold text-violet-200 text-xs">DeepSeek R1 (14b GPU)</span>
+											<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300">{dualDeepSeek.branch}</span>
+										</div>
+										<span class="text-[11px] text-violet-300">{fmt(dualDeepSeek.tokens?.total_tokens)} tok</span>
+									</div>
+
+									{#if dsParsed.thoughts}
+										<div class="rounded-lg border border-violet-900/50 bg-violet-950/25 p-2.5 flex flex-col gap-1.5 font-mono">
+											<button 
+												onclick={() => (expandThoughts = !expandThoughts)}
+												class="flex items-center justify-between text-violet-300 text-xs font-semibold cursor-pointer select-none"
+											>
+												<div class="flex items-center gap-1.5">
+													<Brain class="w-3.5 h-3.5 text-violet-400" />
+													<span>Chain of Thought</span>
+													<span class="text-[10px] px-1 py-0.2 rounded bg-violet-900/60 text-violet-300">
+														{dsParsed.thoughts.length.toLocaleString()} chars
+													</span>
+												</div>
+												<span class="text-[10px] text-violet-400 font-medium">{expandThoughts ? 'Collapse' : 'Expand Thoughts'}</span>
+											</button>
+											{#if expandThoughts}
+												<div class="pt-2 border-t border-violet-900/30 text-violet-200/90 whitespace-pre-wrap leading-relaxed max-h-56 overflow-y-auto pr-1 text-[11px]">
+													{dsParsed.thoughts}
+												</div>
+											{/if}
+										</div>
+									{/if}
+
+									<div class="rounded-b-lg border-x border-b border-zinc-800 bg-zinc-900/40 p-3.5 flex flex-col gap-2">
+										<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+											{dsParsed.body || dualDeepSeek.logs || '(No output recorded)'}
+										</div>
+									</div>
+
+									{#if dualDeepSeek.diff && dualDeepSeek.diff !== '(No files modified)'}
+										<div class="rounded-lg border border-violet-900/40 bg-zinc-950 p-2.5 font-mono">
+											<button 
+												onclick={() => (expandDeepSeekDiff = !expandDeepSeekDiff)}
+												class="w-full flex items-center justify-between text-xs text-violet-400 hover:text-violet-200 cursor-pointer"
+											>
+												<span class="font-medium text-violet-300">Git Diff ({dualDeepSeek.branch})</span>
+												<div class="flex items-center gap-1 text-[11px]">
+													<span>{expandDeepSeekDiff ? 'Hide Diff' : 'View Diff'}</span>
+													<ChevronDown class="w-3.5 h-3.5 {expandDeepSeekDiff ? 'rotate-180' : ''} transition-transform" />
+												</div>
+											</button>
+											{#if expandDeepSeekDiff}
+												<pre class="mt-2 text-[11px] text-violet-200 whitespace-pre-wrap overflow-x-auto max-h-60 p-2 bg-zinc-900/70 rounded border border-zinc-800">{dualDeepSeek.diff}</pre>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							</div>
+
+						<!-- View: Codex Only -->
+						{:else if activeModelView === 'codex'}
+							<div class="flex flex-col gap-3 font-sans text-xs">
+								<div class="p-3 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-between font-mono">
+									<div class="flex items-center gap-2">
+										<span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+										<span class="font-bold text-zinc-100 text-xs">Codex (gpt-6.1-sol)</span>
+										<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">{dualCodex.branch}</span>
+									</div>
+									<span class="text-[11px] text-zinc-400">{fmt(dualCodex.tokens?.total_tokens)} tokens</span>
+								</div>
+
+								<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2.5">
+									<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+										{extractThoughtAndBody(dualCodex.logs).body || dualCodex.logs}
+									</div>
+								</div>
+
+								{#if dualCodex.diff}
+									<div class="rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono">
+										<div class="text-xs font-medium text-emerald-400 mb-2">Git Diff ({dualCodex.branch}):</div>
+										<pre class="text-[11px] text-zinc-300 whitespace-pre-wrap overflow-x-auto p-2.5 bg-zinc-900/60 rounded border border-zinc-800">{dualCodex.diff}</pre>
+									</div>
+								{/if}
+							</div>
+
+						<!-- View: DeepSeek R1 Only -->
+						{:else if activeModelView === 'deepseek'}
+							{@const dsParsed = extractThoughtAndBody(dualDeepSeek.logs)}
+							<div class="flex flex-col gap-3 font-sans text-xs">
+								<div class="p-3 rounded-lg bg-violet-950/60 border border-violet-900/60 flex items-center justify-between font-mono">
+									<div class="flex items-center gap-2">
+										<span class="w-2 h-2 rounded-full bg-violet-400"></span>
+										<span class="font-bold text-violet-200 text-xs">DeepSeek R1 (14b GPU)</span>
+										<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300">{dualDeepSeek.branch}</span>
+									</div>
+									<span class="text-[11px] text-violet-300">{fmt(dualDeepSeek.tokens?.total_tokens)} tokens</span>
+								</div>
+
+								{#if dsParsed.thoughts}
+									<div class="rounded-lg border border-violet-900/50 bg-violet-950/25 p-3 flex flex-col gap-2 font-mono">
+										<button 
+											onclick={() => (expandThoughts = !expandThoughts)}
+											class="flex items-center justify-between text-violet-300 text-xs font-semibold cursor-pointer select-none"
+										>
+											<div class="flex items-center gap-2">
+												<Brain class="w-4 h-4 text-violet-400" />
+												<span>Chain of Thought (กระบวนการคิด)</span>
+												<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300">
+													{dsParsed.thoughts.length.toLocaleString()} chars
+												</span>
+											</div>
+											<span class="text-[11px] text-violet-400 font-medium">{expandThoughts ? 'Collapse' : 'Expand Thoughts'}</span>
+										</button>
 										{#if expandThoughts}
-											<ChevronDown class="w-3.5 h-3.5" />
-										{:else}
-											<ChevronRight class="w-3.5 h-3.5" />
+											<div class="pt-2.5 border-t border-violet-900/30 text-violet-200/90 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto pr-1 text-[11px]">
+												{dsParsed.thoughts}
+											</div>
 										{/if}
 									</div>
-								</button>
+								{/if}
 
-								{#if expandThoughts}
-									<div class="pt-2.5 border-t border-violet-900/30 text-violet-200/90 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto pr-1 selection:bg-violet-500/25 text-[11px]">
-										{parsed.thoughts}
+								<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2.5">
+									<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+										{dsParsed.body || dualDeepSeek.logs}
+									</div>
+								</div>
+
+								{#if dualDeepSeek.diff}
+									<div class="rounded-lg border border-violet-900/40 bg-zinc-950 p-3 font-mono">
+										<div class="text-xs font-medium text-violet-300 mb-2">Git Diff ({dualDeepSeek.branch}):</div>
+										<pre class="text-[11px] text-violet-200 whitespace-pre-wrap overflow-x-auto p-2.5 bg-zinc-900/60 rounded border border-zinc-800">{dualDeepSeek.diff}</pre>
 									</div>
 								{/if}
 							</div>
 						{/if}
 
-						<!-- Actual Model Response / Output -->
-						<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2.5">
-							<div class="flex items-center justify-between text-xs pb-2 border-b border-zinc-800/80">
-								<span class="font-semibold text-zinc-100 flex items-center gap-1.5 font-mono">
-									<span class="text-emerald-400">●</span>
-									<span>Model Response / คำตอบการวิเคราะห์</span>
-								</span>
-								{#if getCurrentDiff()}
-									<button 
-										onclick={() => (activeTab = 'diff')}
-										class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 font-mono transition"
-									>
-										<span>View Git Diff</span>
-										<ChevronRight class="w-3 h-3 text-zinc-400" />
-									</button>
+					<!-- Single Task Mode -->
+					{:else}
+						{@const logs = singleResult?.logs || ''}
+						{@const parsed = extractThoughtAndBody(logs)}
+						{@const isDS = singleResult?.provider?.includes('DeepSeek')}
+						
+						<div class="flex flex-col gap-3 font-sans text-xs">
+							<!-- Model Indicator Header -->
+							<div class="p-2.5 rounded-lg border {isDS ? 'bg-violet-950/40 border-violet-900/50 text-violet-200' : 'bg-zinc-900 border-zinc-800 text-zinc-200'} flex items-center justify-between font-mono">
+								<div class="flex items-center gap-2">
+									<span class="w-2 h-2 rounded-full {isDS ? 'bg-violet-400' : 'bg-emerald-400'}"></span>
+									<span class="font-bold text-xs">{singleResult?.provider || 'Codex'}</span>
+									{#if singleResult?.branch}
+										<span class="text-[10px] px-1.5 py-0.2 rounded {isDS ? 'bg-violet-900/60 text-violet-300' : 'bg-zinc-800 text-zinc-400'}">{singleResult.branch}</span>
+									{/if}
+								</div>
+								{#if singleResult?.tokens?.total_tokens}
+									<span class="text-[11px] {isDS ? 'text-violet-300' : 'text-zinc-400'}">{fmt(singleResult.tokens.total_tokens)} tokens</span>
 								{/if}
 							</div>
 
-							{#if parsed.body}
-								<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
-									{parsed.body}
+							<!-- Model Thinking Card (Collapsible) -->
+							{#if parsed.thoughts}
+								<div class="rounded-lg border border-violet-900/50 bg-violet-950/25 p-3 flex flex-col gap-2 font-mono">
+									<button 
+										onclick={() => (expandThoughts = !expandThoughts)}
+										class="flex items-center justify-between text-violet-300 text-xs font-semibold cursor-pointer select-none"
+									>
+										<div class="flex items-center gap-2">
+											<Brain class="w-4 h-4 text-violet-400" />
+											<span>Chain of Thought (กระบวนการคิด)</span>
+											<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300 border border-violet-800/60 font-mono">
+												{parsed.thoughts.length.toLocaleString()} chars
+											</span>
+										</div>
+										<div class="flex items-center gap-1 text-[11px] text-violet-400 font-medium">
+											<span>{expandThoughts ? 'Collapse' : 'Expand Thoughts'}</span>
+											{#if expandThoughts}
+												<ChevronDown class="w-3.5 h-3.5" />
+											{:else}
+												<ChevronRight class="w-3.5 h-3.5" />
+											{/if}
+										</div>
+									</button>
+
+									{#if expandThoughts}
+										<div class="pt-2.5 border-t border-violet-900/30 text-violet-200/90 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto pr-1 selection:bg-violet-500/25 text-[11px]">
+											{parsed.thoughts}
+										</div>
+									{/if}
 								</div>
-							{:else}
-								<div class="text-zinc-500 italic py-2 font-mono">No response body recorded.</div>
 							{/if}
+
+							<!-- Actual Model Response / Output -->
+							<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2.5">
+								<div class="flex items-center justify-between text-xs pb-2 border-b border-zinc-800/80">
+									<span class="font-semibold text-zinc-100 flex items-center gap-1.5 font-mono">
+										<span class="text-emerald-400">●</span>
+										<span>Model Response / คำตอบการวิเคราะห์</span>
+									</span>
+									{#if singleResult?.diff}
+										<button 
+											onclick={() => (activeTab = 'diff')}
+											class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 font-mono transition"
+										>
+											<span>View Git Diff</span>
+											<ChevronRight class="w-3 h-3 text-zinc-400" />
+										</button>
+									{/if}
+								</div>
+
+								{#if parsed.body}
+									<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+										{parsed.body}
+									</div>
+								{:else}
+									<div class="text-zinc-500 italic py-2 font-mono">No response body recorded.</div>
+								{/if}
+							</div>
 						</div>
-					</div>
+					{/if}
 
 				<!-- DIFF TAB -->
 				{:else if activeTab === 'diff'}

@@ -56,13 +56,24 @@ async function runCodexTask(target: string, prompt: string, branchName: string) 
 		await execAsync(`git checkout -b ${branchName}`, { cwd: target });
 	} catch (e) {}
 
-	const escapedPrompt = prompt.replace(/"/g, '\\"');
-	const codexCmd = `codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" "${escapedPrompt}" </dev/null`;
+	const promptFile = `/tmp/codex_prompt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.txt`;
+	fs.writeFileSync(promptFile, prompt, 'utf8');
 
-	const { stdout, stderr } = await execAsync(codexCmd, {
-		timeout: 15 * 60 * 1000,
-		maxBuffer: 20 * 1024 * 1024
-	});
+	const codexCmd = `cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" -`;
+
+	let stdout = '';
+	let stderr = '';
+	try {
+		const res = await execAsync(codexCmd, {
+			timeout: 15 * 60 * 1000,
+			maxBuffer: 20 * 1024 * 1024,
+			env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' }
+		});
+		stdout = res.stdout;
+		stderr = res.stderr;
+	} finally {
+		try { fs.unlinkSync(promptFile); } catch (e) {}
+	}
 	const { stdout: diff } = await execAsync('git diff', { cwd: target });
 	const { stdout: status } = await execAsync('git status -s', { cwd: target });
 	const tokens = getLatestTokenUsage();
@@ -106,7 +117,7 @@ Do not output git diff markers directly, just output the complete file contents 
 				{ role: 'system', content: systemPrompt },
 				{ role: 'user', content: `Workspace files:\n${fileList}\n\nTask:\n${prompt}` }
 			],
-			stream: false
+			stream: true
 		})
 	});
 
@@ -115,14 +126,37 @@ Do not output git diff markers directly, just output the complete file contents 
 		throw new Error(`KMITL API Error (${res.status}): ${errText}`);
 	}
 
-	const data = await res.json();
-	const thinking = data.message?.thinking || '';
-	const reply = data.message?.content || data.choices?.[0]?.message?.content || '';
-	const fullLogs = thinking ? `<think>\n${thinking}\n</think>\n\n${reply}` : reply;
+	const reader = res.body?.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	let thinking = '';
+	let reply = '';
+	let promptTokens = 35;
+	let completionTokens = 0;
+	let cachedTokens = 0;
 
-	const promptTokens = data.prompt_eval_count || data.usage?.prompt_tokens || 0;
-	const completionTokens = data.eval_count || data.usage?.completion_tokens || 0;
-	const cachedTokens = data.prompt_eval_cached_count || 0;
+	if (reader) {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			const lines = buffer.split('\n');
+			buffer = lines.pop() || '';
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const json = JSON.parse(line);
+					if (json.message?.thinking) thinking += json.message.thinking;
+					if (json.message?.content) reply += json.message.content;
+					if (json.prompt_eval_count) promptTokens = json.prompt_eval_count;
+					if (json.eval_count) completionTokens = json.eval_count;
+					if (json.prompt_eval_cached_count) cachedTokens = json.prompt_eval_cached_count;
+				} catch (e) {}
+			}
+		}
+	}
+
+	const fullLogs = thinking ? `<think>\n${thinking}\n</think>\n\n${reply}` : reply;
 	const totalTokens = promptTokens + completionTokens;
 
 	// Parse file blocks and write to disk
@@ -205,9 +239,17 @@ export const POST: RequestHandler = async ({ request }) => {
 			const codexBranch = `agent/codex-${timestamp}`;
 			const deepseekBranch = `agent/deepseek-${timestamp}`;
 
-			// Run in parallel or sequential
+			// DeepSeek network call runs concurrently with Codex execution (with error boundary)
+			const deepseekPromise = runDeepSeekTask(target, prompt, deepseekBranch).catch(err => ({
+				provider: 'DeepSeek R1 (14b GPU)',
+				branch: deepseekBranch,
+				status: 'Failed',
+				diff: '',
+				logs: `DeepSeek Error: ${err.message}`,
+				tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+			}));
 			const codexRes = await runCodexTask(target, prompt, codexBranch);
-			const deepseekRes = await runDeepSeekTask(target, prompt, deepseekBranch);
+			const deepseekRes = await deepseekPromise;
 
 			saveTaskToHistory({
 				workspace,
