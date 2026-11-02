@@ -10,7 +10,8 @@
 		ExternalLink, 
 		Copy, 
 		Check,
-		RefreshCw
+		RefreshCw,
+		Layers
 	} from 'lucide-svelte';
 
 	interface TokenStats {
@@ -49,7 +50,21 @@
 		files: string[];
 	}
 
-	// State (Svelte 5 Runes) - Zero hardcoded numbers
+	interface TaskResult {
+		provider: string;
+		branch: string;
+		status: string;
+		diff: string;
+		logs: string;
+		tokens?: {
+			total_tokens: number;
+			input_tokens: number;
+			cached_input_tokens: number;
+			output_tokens: number;
+		};
+	}
+
+	// State
 	let status = $state<SystemStatus | null>(null);
 	let workspaces = $state<string[]>([]);
 	let activeWs = $state<string>('Android-Tv');
@@ -57,18 +72,21 @@
 
 	let prompt = $state<string>('');
 	let branch = $state<string>('');
+	let provider = $state<'codex' | 'deepseek' | 'both'>('codex');
 	let isExecuting = $state<boolean>(false);
 	let taskBadge = $state<string>('Ready');
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
 
-	let diffResult = $state<string>('');
-	let logsResult = $state<string>('');
-	let activeTab = $state<'diff' | 'logs' | 'files'>('diff');
+	// Execution outputs
+	let activeTab = $state<'diff' | 'deepseek_diff' | 'logs' | 'deepseek_logs' | 'files'>('diff');
+	let singleResult = $state<TaskResult | null>(null);
+	let dualCodex = $state<TaskResult | null>(null);
+	let dualDeepSeek = $state<TaskResult | null>(null);
 
-	// Real dynamic token stats from server
+	// Tokens
 	let tokenStats = $state<TokenStats | null>(null);
 
-	// Clone Modal
+	// Modal
 	let showCloneModal = $state<boolean>(false);
 	let cloneUrl = $state<string>('');
 	let cloneFolder = $state<string>('');
@@ -77,6 +95,7 @@
 	// Terminal
 	let quickCmd = $state<string>('');
 	let isRunningCmd = $state<boolean>(false);
+	let terminalLogs = $state<string>('');
 	let copied = $state<boolean>(false);
 
 	async function fetchStatus() {
@@ -84,9 +103,7 @@
 			const res = await fetch('/api/status');
 			if (res.ok) {
 				status = await res.json();
-				if (status?.tokens) {
-					tokenStats = status.tokens;
-				}
+				if (status?.tokens) tokenStats = status.tokens;
 			}
 		} catch (e) {
 			console.error(e);
@@ -126,37 +143,42 @@
 	async function executeTask() {
 		if (!prompt.trim() || isExecuting) return;
 		isExecuting = true;
-		taskBadge = 'Running...';
+		taskBadge = provider === 'both' ? 'Running Dual Agents...' : 'Executing...';
 		taskBadgeType = 'running';
 
 		try {
 			const res = await fetch('/api/task', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ workspace: activeWs, prompt, branch })
+				body: JSON.stringify({ workspace: activeWs, prompt, branch, provider })
 			});
 			const data = await res.json();
 
 			if (data.success) {
-				taskBadge = `Done (${data.branch})`;
+				taskBadge = 'Completed';
 				taskBadgeType = 'success';
-				diffResult = data.diff;
-				logsResult = data.logs;
-				activeTab = 'diff';
-				prompt = '';
+				
+				if (data.mode === 'both') {
+					dualCodex = data.codex;
+					dualDeepSeek = data.deepseek;
+					singleResult = null;
+					activeTab = 'diff';
+				} else {
+					singleResult = data;
+					dualCodex = null;
+					dualDeepSeek = null;
+					activeTab = 'diff';
+				}
+
 				fetchWorkspaceDetails(activeWs);
 				fetchStatus();
 			} else {
 				taskBadge = 'Failed';
 				taskBadgeType = 'error';
-				logsResult = data.error || 'Execution failed';
-				activeTab = 'logs';
 			}
 		} catch (err: any) {
 			taskBadge = 'Error';
 			taskBadgeType = 'error';
-			logsResult = err.message;
-			activeTab = 'logs';
 		} finally {
 			isExecuting = false;
 		}
@@ -172,7 +194,7 @@
 		if (!quickCmd.trim()) return;
 		isRunningCmd = true;
 		activeTab = 'logs';
-		logsResult = `$ ${quickCmd}\n`;
+		terminalLogs = `$ ${quickCmd}\nRunning in ${activeWs}...\n`;
 
 		try {
 			const res = await fetch('/api/terminal', {
@@ -181,11 +203,11 @@
 				body: JSON.stringify({ workspace: activeWs, command: quickCmd })
 			});
 			const data = await res.json();
-			logsResult = `$ ${quickCmd}\n\n` + (data.output || data.error || '(no output)');
+			terminalLogs = `$ ${quickCmd}\n\n` + (data.output || data.error || '(no output)');
 			quickCmd = '';
 			fetchWorkspaceDetails(activeWs);
 		} catch (err: any) {
-			logsResult += `\nError: ${err.message}`;
+			terminalLogs += `\nError: ${err.message}`;
 		} finally {
 			isRunningCmd = false;
 		}
@@ -217,9 +239,17 @@
 		}
 	}
 
-	function copyDiff() {
-		if (!diffResult) return;
-		navigator.clipboard.writeText(diffResult);
+	function getCurrentDiff(): string {
+		if (dualCodex && dualDeepSeek) {
+			return activeTab === 'deepseek_diff' ? dualDeepSeek.diff : dualCodex.diff;
+		}
+		return singleResult?.diff || '';
+	}
+
+	function copyCurrentDiff() {
+		const d = getCurrentDiff();
+		if (!d) return;
+		navigator.clipboard.writeText(d);
 		copied = true;
 		setTimeout(() => (copied = false), 2000);
 	}
@@ -237,7 +267,7 @@
 	});
 </script>
 
-<!-- Top Minimal Navbar -->
+<!-- Top Navbar -->
 <header class="border-b border-zinc-800 bg-zinc-950 px-5 py-3 flex items-center justify-between text-xs">
 	<div class="flex items-center gap-3">
 		<span class="font-bold text-sm tracking-tight text-zinc-100">codex</span>
@@ -245,24 +275,24 @@
 		<span class="font-mono text-zinc-300 font-medium">{activeWs}</span>
 	</div>
 
-	<!-- System & Live Token Stats -->
+	<!-- System Badges & GPU Cluster -->
 	<div class="flex items-center gap-3 font-mono text-[11px] text-zinc-400">
 		<div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
 			<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-			<span>{status?.codexAuth || 'Checking'}</span>
+			<span>{status?.codexAuth || 'ChatGPT Plus'}</span>
+		</div>
+
+		<div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-violet-300">
+			<span class="w-1.5 h-1.5 rounded-full bg-violet-400"></span>
+			<span>KMITL GPU (14b)</span>
 		</div>
 
 		{#if tokenStats}
-			<div class="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
+			<div class="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
 				<span class="text-zinc-500">Tokens:</span>
 				<strong class="text-zinc-100">{fmt(tokenStats.totalTokens)}</strong>
 			</div>
 		{/if}
-
-		<div class="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
-			<span class="text-zinc-500">Disk:</span>
-			<span>{status?.diskUsage || '...'}</span>
-		</div>
 
 		<div class="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
 			<span class="text-zinc-500">RAM:</span>
@@ -361,18 +391,42 @@
 	<!-- Main Task & Results Area -->
 	<main class="flex-1 flex flex-col gap-4 min-w-0">
 
-		<!-- Task Input Card -->
+		<!-- Task Input Card with Clean Provider Switcher -->
 		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-4 flex flex-col gap-3">
-			<div class="flex items-center justify-between text-xs">
-				<span class="font-medium text-zinc-300">Prompt</span>
-				<span class="font-mono text-[11px] text-zinc-500">gpt-6.1-sol &bull; 475k ctx</span>
+			<div class="flex items-center justify-between text-xs flex-wrap gap-2">
+				<div class="flex items-center gap-1.5">
+					<span class="font-medium text-zinc-300">Prompt</span>
+				</div>
+
+				<!-- Clean Segmented Control: Choose Provider -->
+				<div class="flex rounded-md bg-zinc-950 p-0.5 border border-zinc-800 text-[11px] font-medium">
+					<button 
+						onclick={() => (provider = 'codex')}
+						class="px-2.5 py-1 rounded transition {provider === 'codex' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+					>
+						Codex (ChatGPT)
+					</button>
+					<button 
+						onclick={() => (provider = 'deepseek')}
+						class="px-2.5 py-1 rounded transition {provider === 'deepseek' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+					>
+						DeepSeek R1 (GPU)
+					</button>
+					<button 
+						onclick={() => (provider = 'both')}
+						class="px-2.5 py-1 rounded transition flex items-center gap-1 {provider === 'both' ? 'bg-indigo-600 text-white font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+					>
+						<Layers class="w-3 h-3" />
+						<span>Both (Compare)</span>
+					</button>
+				</div>
 			</div>
 
 			<textarea 
 				bind:value={prompt}
 				onkeydown={handleKeydown}
 				rows="3"
-				placeholder="What should Codex do? (⌘+Enter to execute)"
+				placeholder="What should the agent(s) do? (⌘+Enter to execute)"
 				class="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-zinc-700 resize-none font-mono placeholder:text-zinc-600 leading-relaxed"
 			></textarea>
 
@@ -380,84 +434,83 @@
 				<input 
 					type="text" 
 					bind:value={branch}
-					placeholder="Branch: auto (or specify)"
-					class="px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-xs font-mono text-zinc-300 focus:outline-none focus:border-zinc-700 placeholder:text-zinc-600 w-48"
+					placeholder={provider === 'both' ? 'Branches: agent/codex-* & agent/deepseek-*' : 'Branch: auto (or specify)'}
+					class="px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-xs font-mono text-zinc-300 focus:outline-none focus:border-zinc-700 placeholder:text-zinc-600 flex-1 max-w-sm"
 				/>
 
 				<button 
 					onclick={executeTask}
 					disabled={isExecuting || !prompt.trim()}
-					class="px-4 py-1.5 rounded-lg bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer"
+					class="px-4 py-1.5 rounded-lg bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
 				>
 					{#if isExecuting}
 						<RefreshCw class="w-3 h-3 animate-spin" />
-						<span>Executing...</span>
+						<span>{provider === 'both' ? 'Running Both...' : 'Executing...'}</span>
 					{:else}
 						<Play class="w-3 h-3 fill-current" />
-						<span>Execute</span>
+						<span>{provider === 'both' ? 'Run Dual Agents' : 'Execute'}</span>
 					{/if}
 				</button>
 			</div>
 		</div>
 
-		<!-- Live Token Metric Strip (Clean Single Row) -->
-		{#if tokenStats}
-			<div class="rounded-lg border border-zinc-800 bg-zinc-900/20 px-4 py-2.5 flex items-center justify-between text-[11px] font-mono text-zinc-400 overflow-x-auto gap-4">
-				<div class="flex items-center gap-1.5">
-					<span class="text-zinc-500">Cumulative:</span>
-					<strong class="text-zinc-200">{fmt(tokenStats.totalTokens)}</strong>
-				</div>
-				<div class="flex items-center gap-1.5">
-					<span class="text-zinc-500">Last Task:</span>
-					<strong class="text-zinc-200">{fmt(tokenStats.latest?.total_tokens)}</strong>
-				</div>
-				<div class="flex items-center gap-1.5">
-					<span class="text-zinc-500">Cached:</span>
-					<span class="text-emerald-400 font-medium">
-						{fmt(tokenStats.latest?.cached_input_tokens)} 
-						({Math.round(((tokenStats.latest?.cached_input_tokens || 0) / (tokenStats.latest?.input_tokens || 1)) * 100)}%)
-					</span>
-				</div>
-				<div class="flex items-center gap-1.5">
-					<span class="text-zinc-500">Output:</span>
-					<span class="text-zinc-300">{fmt(tokenStats.latest?.output_tokens)}</span>
-				</div>
-				<div class="flex items-center gap-1.5 text-zinc-500">
-					<span>Sessions:</span>
-					<span class="text-zinc-400">{tokenStats.sessionCount}</span>
-				</div>
-			</div>
-		{/if}
-
-		<!-- Results Viewer -->
-		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 flex-1 flex flex-col overflow-hidden min-h-[420px]">
-			<!-- Header -->
+		<!-- Results Viewer with Side-by-Side or Dual Tabs -->
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 flex-1 flex flex-col overflow-hidden min-h-[440px]">
+			<!-- Header Tabs -->
 			<div class="flex items-center justify-between border-b border-zinc-800 px-3 bg-zinc-950">
-				<div class="flex items-center">
-					<button 
-						onclick={() => (activeTab = 'diff')}
-						class="px-3.5 py-2.5 text-xs font-medium border-b-2 transition {activeTab === 'diff' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
-					>
-						Diff
-					</button>
-					<button 
-						onclick={() => (activeTab = 'logs')}
-						class="px-3.5 py-2.5 text-xs font-medium border-b-2 transition {activeTab === 'logs' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
-					>
-						Logs
-					</button>
+				<div class="flex items-center overflow-x-auto text-xs">
+					{#if dualCodex && dualDeepSeek}
+						<button 
+							onclick={() => (activeTab = 'diff')}
+							class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'diff' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+						>
+							Codex Diff ({dualCodex.branch})
+						</button>
+						<button 
+							onclick={() => (activeTab = 'deepseek_diff')}
+							class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'deepseek_diff' ? 'border-violet-400 text-violet-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+						>
+							DeepSeek Diff ({dualDeepSeek.branch})
+						</button>
+						<button 
+							onclick={() => (activeTab = 'logs')}
+							class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'logs' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+						>
+							Codex Logs
+						</button>
+						<button 
+							onclick={() => (activeTab = 'deepseek_logs')}
+							class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'deepseek_logs' ? 'border-violet-400 text-violet-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+						>
+							DeepSeek Logs
+						</button>
+					{:else}
+						<button 
+							onclick={() => (activeTab = 'diff')}
+							class="px-3.5 py-2.5 font-medium border-b-2 transition {activeTab === 'diff' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+						>
+							Diff {singleResult?.branch ? `(${singleResult.branch})` : ''}
+						</button>
+						<button 
+							onclick={() => (activeTab = 'logs')}
+							class="px-3.5 py-2.5 font-medium border-b-2 transition {activeTab === 'logs' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+						>
+							Agent Logs
+						</button>
+					{/if}
+					
 					<button 
 						onclick={() => (activeTab = 'files')}
-						class="px-3.5 py-2.5 text-xs font-medium border-b-2 transition {activeTab === 'files' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+						class="px-3.5 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'files' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
 					>
-						Files & Commits
+						Files & History
 					</button>
 				</div>
 
 				<div class="flex items-center gap-3">
-					{#if activeTab === 'diff' && diffResult.trim()}
+					{#if (activeTab === 'diff' || activeTab === 'deepseek_diff') && getCurrentDiff()}
 						<button 
-							onclick={copyDiff}
+							onclick={copyCurrentDiff}
 							class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 transition font-mono"
 						>
 							{#if copied}
@@ -475,12 +528,16 @@
 				</div>
 			</div>
 
-			<!-- Content Area -->
+			<!-- Tab Content Area -->
 			<div class="p-3.5 flex-1 overflow-auto bg-zinc-950 font-mono text-xs">
 				{#if activeTab === 'diff'}
-					<pre class="text-zinc-200 whitespace-pre-wrap leading-relaxed">{diffResult || '(No diff)'}</pre>
+					<pre class="text-zinc-200 whitespace-pre-wrap leading-relaxed">{dualCodex ? dualCodex.diff : (singleResult?.diff || '(No diff recorded)')}</pre>
+				{:else if activeTab === 'deepseek_diff'}
+					<pre class="text-violet-200 whitespace-pre-wrap leading-relaxed">{dualDeepSeek?.diff || '(No diff recorded)'}</pre>
 				{:else if activeTab === 'logs'}
-					<pre class="text-zinc-300 whitespace-pre-wrap leading-relaxed">{logsResult || '(No logs)'}</pre>
+					<pre class="text-zinc-300 whitespace-pre-wrap leading-relaxed">{dualCodex ? dualCodex.logs : (singleResult?.logs || terminalLogs || '(No logs)')}</pre>
+				{:else if activeTab === 'deepseek_logs'}
+					<pre class="text-violet-200 whitespace-pre-wrap leading-relaxed">{dualDeepSeek?.logs || '(No logs)'}</pre>
 				{:else if activeTab === 'files' && wsDetails}
 					<div class="flex flex-col gap-3.5 text-zinc-300">
 						<div>
@@ -521,9 +578,9 @@
 
 			<div class="flex flex-col gap-2.5">
 				<div>
-					<label for="clone-repo-url" class="text-zinc-400 block mb-1 text-[11px]">Git URL</label>
+					<label for="clone-url-field" class="text-zinc-400 block mb-1 text-[11px]">Git URL</label>
 					<input 
-						id="clone-repo-url"
+						id="clone-url-field"
 						type="text" 
 						bind:value={cloneUrl}
 						placeholder="https://github.com/..." 
@@ -531,9 +588,9 @@
 					/>
 				</div>
 				<div>
-					<label for="clone-target-folder" class="text-zinc-400 block mb-1 text-[11px]">Folder (optional)</label>
+					<label for="clone-folder-field" class="text-zinc-400 block mb-1 text-[11px]">Folder (optional)</label>
 					<input 
-						id="clone-target-folder"
+						id="clone-folder-field"
 						type="text" 
 						bind:value={cloneFolder}
 						placeholder="folder-name" 
