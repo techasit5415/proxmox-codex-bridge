@@ -114,7 +114,20 @@ export function scanAndSyncCodexSessions(): TaskRecord[] {
 	for (const file of sessionFiles) {
 		const basename = path.basename(file, '.jsonl');
 		const fileId = `codex_${basename}`;
-		if (existingIds.has(fileId)) continue;
+		
+		const existingIndex = history.findIndex((h) => h.id === fileId);
+		if (existingIndex !== -1) {
+			const existing = history[existingIndex];
+			// Only skip if already has meaningful prompt AND logs!
+			const isDummy = 
+				!existing.prompt ||
+				existing.prompt.startsWith('Session ') ||
+				!existing.logs ||
+				existing.logs.startsWith('Session file:');
+			if (!isDummy) {
+				continue;
+			}
+		}
 
 		try {
 			const stat = fs.statSync(file);
@@ -177,9 +190,18 @@ export function scanAndSyncCodexSessions(): TaskRecord[] {
 			}
 
 			const wsName = path.basename(cwd) || 'Android-Tv';
-			const logsText = thoughtLines.length > 0 
-				? thoughtLines.join('\n\n') 
-				: (reply ? `Assistant: ${reply}` : `Session file: ${path.basename(file)}`);
+			
+			// If reply exists, it is the primary model response!
+			let logsText = '';
+			if (reply) {
+				logsText = thoughtLines.length > 0
+					? `${thoughtLines.join('\n\n')}\n\n${reply}`
+					: reply;
+			} else if (thoughtLines.length > 0) {
+				logsText = thoughtLines.join('\n\n');
+			} else {
+				logsText = `Session file: ${path.basename(file)}`;
+			}
 
 			const record: TaskRecord = {
 				id: fileId,
@@ -189,15 +211,18 @@ export function scanAndSyncCodexSessions(): TaskRecord[] {
 				provider: 'Codex (gpt-6.1-sol)',
 				prompt: prompt,
 				branch: 'main',
-				status: 'Archived session',
+				status: reply ? 'Completed' : 'Archived session',
 				diff: reply ? `// Last Agent Response:\n${reply}` : '(No diff recorded for past CLI session)',
 				logs: logsText,
 				tokens: tokens,
 				mode: 'single'
 			};
 
-			history.push(record);
-			existingIds.add(fileId);
+			if (existingIndex !== -1) {
+				history[existingIndex] = record;
+			} else {
+				history.push(record);
+			}
 			addedCount++;
 		} catch (e) {
 			console.error(`Error parsing session file ${file}:`, e);
