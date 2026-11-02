@@ -148,15 +148,15 @@
 	// Computed filtered history based on active filter pill
 	let filteredHistory = $derived.by(() => {
 		if (historyFilter === 'all') return history;
-		if (historyFilter === 'codex') return history.filter(h => h.mode !== 'both' && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek')));
-		if (historyFilter === 'deepseek') return history.filter(h => h.mode !== 'both' && h.provider?.includes('DeepSeek'));
+		if (historyFilter === 'codex') return history.filter(h => h.mode !== 'both' && !h.provider?.includes('Dual') && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek')));
+		if (historyFilter === 'deepseek') return history.filter(h => h.mode !== 'both' && !h.provider?.includes('Dual') && h.provider?.includes('DeepSeek'));
 		if (historyFilter === 'both') return history.filter(h => h.mode === 'both' || h.provider?.includes('Dual'));
 		return history;
 	});
 
 	function countHistory(type: 'codex' | 'deepseek' | 'both'): number {
-		if (type === 'codex') return history.filter(h => h.mode !== 'both' && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek'))).length;
-		if (type === 'deepseek') return history.filter(h => h.mode !== 'both' && h.provider?.includes('DeepSeek')).length;
+		if (type === 'codex') return history.filter(h => h.mode !== 'both' && !h.provider?.includes('Dual') && (h.provider?.includes('Codex') || !h.provider?.includes('DeepSeek'))).length;
+		if (type === 'deepseek') return history.filter(h => h.mode !== 'both' && !h.provider?.includes('Dual') && h.provider?.includes('DeepSeek')).length;
 		if (type === 'both') return history.filter(h => h.mode === 'both' || h.provider?.includes('Dual')).length;
 		return 0;
 	}
@@ -695,8 +695,8 @@
 						class="w-full text-left p-2 rounded text-xs transition border flex flex-col gap-1 {selectedTaskId === item.id ? 'bg-zinc-800 border-zinc-700 text-zinc-100 shadow-xs' : 'bg-zinc-950/40 border-zinc-900 text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}"
 					>
 						<div class="flex items-center justify-between font-mono text-[10px]">
-							<span class="px-1.5 py-0.2 rounded font-medium {item.provider?.includes('DeepSeek') ? 'bg-violet-950/70 text-violet-300 border border-violet-800/60' : item.provider?.includes('Dual') ? 'bg-indigo-950/70 text-indigo-300 border border-indigo-800/60' : 'bg-zinc-800 text-zinc-300 border border-zinc-700'}">
-								{item.provider?.includes('DeepSeek') ? 'DeepSeek' : item.provider?.includes('Dual') ? 'Dual' : 'Codex'}
+							<span class="px-1.5 py-0.2 rounded font-medium {item.mode === 'both' || item.provider?.includes('Dual') ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-800/80' : item.provider?.includes('DeepSeek') ? 'bg-violet-950/70 text-violet-300 border border-violet-800/60' : 'bg-zinc-800 text-zinc-300 border border-zinc-700'}">
+								{item.mode === 'both' || item.provider?.includes('Dual') ? 'Dual' : item.provider?.includes('DeepSeek') ? 'DeepSeek' : 'Codex'}
 							</span>
 							<span class="text-zinc-500">{formatTime(item.timestamp)}</span>
 						</div>
