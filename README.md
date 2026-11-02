@@ -6,6 +6,22 @@
 
 ---
 
+## 📑 สารบัญ (Table of Contents)
+- [🏗️ สถาปัตยกรรมระบบ (System Architecture)](#️-สถาปัตยกรรมระบบ-system-architecture)
+- [🚀 ฟีเจอร์หลัก (Core Features)](#-ฟีเจอร์หลัก-core-features)
+- [1. 🧩 โครงสร้าง 11 Modular Components (Svelte 5 Runes)](#1--โครงสร้าง-11-modular-components-svelte-5-runes)
+- [2. 🗂️ ระบบ Auto Temp Workspace และการจัดการพื้นที่](#2-️-ระบบ-auto-temp-workspace-และการจัดการพื้นที่)
+- [3. 🎯 Task Intent Detection (Code vs General / Planning)](#3--task-intent-detection--code-vs--general--planning)
+- [4. 🛡️ กฎเหล็ก Anti-Hallucination & Multi-Agent Strict Policy](#4-️-กฎเหล็ก-anti-hallucination--multi-agent-strict-policy)
+- [5. 📊 Dual Compare View & ประวัติแบบ Real-time](#5--dual-compare-view--ประวัติแบบ-real-time)
+- [🛠️ การติดตั้งและการเชื่อมต่อ (Setup & Deployment)](#️-การติดตั้งและการเชื่อมต่อ-setup--deployment)
+- [⚡ การใช้งาน Permanent CLI Runner (scripts/ask_models.py)](#-การใช้งาน-permanent-cli-runner-scriptsask_modelspy)
+- [📦 คู่มือการย้ายเครื่อง (Migration Guide)](#-คู่มือการย้ายเครื่อง-migration-guide)
+- [❓ คำถามที่พบบ่อย (FAQ)](#-คำถามที่พบบ่อย-faq)
+- [📝 บันทึกประวัติการพัฒนา (Changelog)](#-บันทึกประวัติการพัฒนา-changelog)
+
+---
+
 ## 🏗️ สถาปัตยกรรมระบบ (System Architecture)
 
 ```mermaid
@@ -95,10 +111,11 @@ dashboard/src/lib/components/
   ```
 * ระบบสร้างไฟล์ `README.md` และเริ่มต้น Git repository (`git init`) ให้พร้อมทำงานทันที
 
-### 2.2 การลบ Workspace (Trash & Clean):
-* **ลบรายตัว (Individual Delete):** มีปุ่มถังขยะสำหรับแต่ละ workspace (พร้อม Dialog ยืนยัน)
+### 2.2 การลบ Workspace (Workspace Clean & Deletion):
+* **ลบรายตัว (Individual Delete):** มีปุ่มถังขยะสำหรับแต่ละ workspace (พร้อม Dialog ยืนยันก่อนลบ)
 * **ล้าง Temp ทั้งหมด (Clean Temp):** ปุ่มลบโฟลเดอร์ที่ขึ้นต้นด้วย `temp-*` ทั้งหมดในคลิกเดียวเพื่อคืนพื้นที่ฮาร์ดดิสก์
-* **ประวัติไม่สูญหาย:** การลบ workspace จะไม่ลบประวัติงานใน `tasks_history.json` ทำให้ยังสามารถเปิดดูผลลัพธ์และ Diff เก่าผ่านหน้า Dashboard ได้ตลอดเวลา
+* ⚠️ **การลบถาวร (Permanent Deletion):** การลบ workspace ผ่านระบบจะใช้ `fs.rmSync(..., { recursive: true, force: true })` เพื่อลบโฟลเดอร์ออกจากดิสก์ทันที (ไม่มี Recycle Bin พักไฟล์) จึงควรระวังก่อนยืนยัน
+* **การเก็บประวัติงาน (History Retention):** แม้โฟลเดอร์โปรเจกต์จะถูกลบออกไป แต่ระบบบันทึกประวัติ (Logs / Git Diff / Responses) ของ **50 งานล่าสุด** ใน `tasks_history.json` จะยังคงเปิดดูย้อนหลังผ่านหน้า Web Dashboard ได้ตามปกติ
 
 ---
 
@@ -320,6 +337,28 @@ git clone https://github.com/techasit5415/proxmox-codex-bridge.git
    systemctl daemon-reload
    systemctl enable --now agent-web.service
    ```
+
+---
+
+## ❓ คำถามที่พบบ่อย (FAQ)
+
+### Q1: ทำไมบางครั้ง DeepSeek R1 ถึงแจ้งข้อผิดพลาด 504 Gateway Timeout หรือ 403 Slot Quota?
+**A:** DeepSeek R1 รันอยู่บน GPU Cluster ของ CS KMITL ซึ่งมีการแชร์การใช้งานร่วมกัน หากคลัสเตอร์มีผู้ใช้งานพร้อมกันจำนวนมาก ระบบ Nginx จะตอบกลับเป็น 504 Timeout หรือ 403 Full Slot แต่ระบบ Proxmox Bridge จะส่งข้อมูลข้อผิดพลาดตรงไปตรงมา และ OpenAI Codex จะยังคงทำงานและส่งผลลัพธ์ให้คุณได้ตามปกติ
+
+### Q2: หากหน้า Web Dashboard (Port 3000) เข้าไม่ได้ ต้องตรวจสอบอย่างไร?
+**A:** เข้า SSH ไปที่ Proxmox CT แล้วตรวจเช็คสถานะเซอร์วิส:
+```bash
+ssh root@192.168.5.159 "systemctl status agent-web.service"
+# หากหยุดทำงาน ให้สั่งรีสตาร์ท:
+ssh root@192.168.5.159 "systemctl restart agent-web.service"
+```
+
+### Q3: จะทดสอบว่าสคริปต์ `ask_models.py` เชื่อมต่อเซิร์ฟเวอร์ได้หรือไม่ทำอย่างไร?
+**A:** รันคำสั่งทดสอบสั้นๆ จากคอมพิวเตอร์ของคุณ:
+```bash
+python scripts/ask_models.py --codex "test connection"
+```
+หากแสดงผลลัพธ์ของ Codex พร้อม URL บันทึกใน Dashboard แสดงว่าการเชื่อมต่อสมบูรณ์
 
 ---
 
