@@ -139,7 +139,7 @@
 	// Search & Filter state for logs & thoughts
 	let searchQuery = $state<string>('');
 	let logFilter = $state<'all' | 'thoughts' | 'exec' | 'error'>('all');
-	let expandThoughts = $state<boolean>(true);
+	let expandThoughts = $state<boolean>(false);
 
 	// Tokens
 	let tokenStats = $state<TokenStats | null>(
@@ -776,7 +776,7 @@
 						class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 flex items-center gap-1.5 {activeTab === 'thoughts' ? 'border-violet-400 text-violet-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
 					>
 						<Brain class="w-3.5 h-3.5" />
-						<span>Thinking & Reasoning</span>
+						<span>Response & Reasoning</span>
 					</button>
 
 					{#if dualCodex && dualDeepSeek}
@@ -886,25 +886,28 @@
 
 			<!-- Tab Content Area -->
 			<div class="p-3.5 flex-1 overflow-auto bg-zinc-950 font-mono text-xs">
-				<!-- THOUGHTS & REASONING TAB -->
+				<!-- RESPONSE & REASONING TAB -->
 				{#if activeTab === 'thoughts'}
 					{@const logs = getActiveRawLogs()}
 					{@const parsed = extractThoughtAndBody(logs)}
 					
-					<div class="flex flex-col gap-3">
-						<!-- Model Thinking Card -->
+					<div class="flex flex-col gap-3 font-sans text-xs">
+						<!-- Model Thinking Card (Collapsible) -->
 						{#if parsed.thoughts}
-							<div class="rounded-lg border border-violet-900/50 bg-violet-950/20 p-3.5 flex flex-col gap-2">
+							<div class="rounded-lg border border-violet-900/50 bg-violet-950/25 p-3 flex flex-col gap-2 font-mono">
 								<button 
 									onclick={() => (expandThoughts = !expandThoughts)}
-									class="flex items-center justify-between text-violet-300 text-xs font-semibold"
+									class="flex items-center justify-between text-violet-300 text-xs font-semibold cursor-pointer select-none"
 								>
-									<div class="flex items-center gap-1.5">
+									<div class="flex items-center gap-2">
 										<Brain class="w-4 h-4 text-violet-400" />
-										<span>Chain of Thought / Model Reasoning</span>
+										<span>Chain of Thought (กระบวนการคิด)</span>
+										<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300 border border-violet-800/60 font-mono">
+											{parsed.thoughts.length.toLocaleString()} chars
+										</span>
 									</div>
-									<div class="flex items-center gap-1 text-[11px] text-violet-400">
-										<span>{expandThoughts ? 'Collapse' : 'Expand'}</span>
+									<div class="flex items-center gap-1 text-[11px] text-violet-400 font-medium">
+										<span>{expandThoughts ? 'Collapse' : 'Expand Thoughts'}</span>
 										{#if expandThoughts}
 											<ChevronDown class="w-3.5 h-3.5" />
 										{:else}
@@ -914,23 +917,38 @@
 								</button>
 
 								{#if expandThoughts}
-									<div class="pt-2 border-t border-violet-900/30 text-violet-200/90 whitespace-pre-wrap leading-relaxed selection:bg-violet-500/25">
+									<div class="pt-2.5 border-t border-violet-900/30 text-violet-200/90 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto pr-1 selection:bg-violet-500/25 text-[11px]">
 										{parsed.thoughts}
 									</div>
 								{/if}
 							</div>
 						{/if}
 
-						<!-- Executed Actions / Solution Steps -->
-						<div class="flex flex-col gap-1.5">
-							<div class="text-zinc-500 text-[10px] uppercase tracking-wider font-semibold">Action Steps & Logged Events</div>
-							{#each getFilteredLogLines(parsed.body || logs) as item}
-								<div class="py-0.5 px-1.5 rounded transition {item.line.includes('exec') || item.line.includes('bash') ? 'text-cyan-300 bg-cyan-950/20' : item.line.includes('error') ? 'text-rose-400 bg-rose-950/20' : 'text-zinc-300'}">
-									{item.line}
+						<!-- Actual Model Response / Output -->
+						<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2.5">
+							<div class="flex items-center justify-between text-xs pb-2 border-b border-zinc-800/80">
+								<span class="font-semibold text-zinc-100 flex items-center gap-1.5 font-mono">
+									<span class="text-emerald-400">●</span>
+									<span>Model Response / คำตอบการวิเคราะห์</span>
+								</span>
+								{#if getCurrentDiff()}
+									<button 
+										onclick={() => (activeTab = 'diff')}
+										class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 font-mono transition"
+									>
+										<span>View Git Diff</span>
+										<ChevronRight class="w-3 h-3 text-zinc-400" />
+									</button>
+								{/if}
+							</div>
+
+							{#if parsed.body}
+								<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+									{parsed.body}
 								</div>
 							{:else}
-								<div class="text-zinc-600 italic py-2">No matching events or thoughts found. Run a task to see reasoning.</div>
-							{/each}
+								<div class="text-zinc-500 italic py-2 font-mono">No response body recorded.</div>
+							{/if}
 						</div>
 					</div>
 
