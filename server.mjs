@@ -13,6 +13,51 @@ const KMITL_TOKEN = 'gpu_910c7fbfed984909803659c2885e0d320746a068';
 const DEEPSEEK_MODEL = 'deepseek-r1:14b';
 const HISTORY_FILE = '/opt/agent-bridge/tasks_history.json';
 
+function getLatestTokenUsage() {
+  const baseDir = '/root/.codex/sessions';
+  if (!fs.existsSync(baseDir)) return null;
+
+  function getFiles(dir) {
+    let files = [];
+    try {
+      fs.readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) files = files.concat(getFiles(fullPath));
+        else if (entry.name.endsWith('.jsonl')) files.push(fullPath);
+      });
+    } catch (e) {}
+    return files;
+  }
+
+  const allFiles = getFiles(baseDir);
+  if (allFiles.length === 0) return null;
+  allFiles.sort((a, b) => {
+    try {
+      return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+    } catch {
+      return 0;
+    }
+  });
+  const latestFile = allFiles[0];
+
+  try {
+    const lines = fs.readFileSync(latestFile, 'utf8').split('\n');
+    let lastUsage = null;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const payload = parsed.payload;
+        if (payload?.info?.total_token_usage) lastUsage = payload.info.total_token_usage;
+        else if (payload?.token_usage) lastUsage = payload.token_usage;
+      } catch (e) {}
+    }
+    return lastUsage;
+  } catch (e) {
+    return null;
+  }
+}
+
 function recordTaskHistory(entry) {
   try {
     let history = [];
@@ -24,6 +69,7 @@ function recordTaskHistory(entry) {
       id: `task_${now}_${Math.random().toString(36).substring(2, 7)}`,
       timestamp: now,
       date: new Date(now).toISOString(),
+      source: 'Antigravity MCP',
       ...entry
     });
     if (history.length > 50) history.length = 50;
@@ -157,6 +203,7 @@ file:path/to/file.ext
 
   const data = await res.json();
   const reply = data.choices[0]?.message?.content || '';
+  const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
   let modifiedFiles = 0;
   const regex = /(?:file:([^\n\r]+)[\r\n]+)?```[a-zA-Z0-9_\-]*[\r\n]+([\s\S]*?)```/g;
@@ -179,7 +226,13 @@ file:path/to/file.ext
     branch: branchName,
     diff: diff.trim() || `(${modifiedFiles} files created/modified)`,
     status: status.trim() || 'Clean',
-    logs: reply.trim()
+    logs: reply.trim(),
+    tokens: {
+      total_tokens: usage.total_tokens || 0,
+      input_tokens: usage.prompt_tokens || 0,
+      cached_input_tokens: 0,
+      output_tokens: usage.completion_tokens || 0
+    }
   };
 }
 
@@ -194,12 +247,14 @@ async function executeCodex(target, prompt, branchName) {
   const { stdout, stderr } = await execAsync(codexCmd, { timeout: 15 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 });
   const { stdout: diff } = await execAsync('git diff', { cwd: target });
   const { stdout: status } = await execAsync('git status -s', { cwd: target });
+  const tokens = getLatestTokenUsage() || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
 
   return {
     branch: branchName,
     diff: diff.trim() || '(No tracked files modified)',
     status: status.trim() || 'Clean',
-    logs: (stdout + '\n' + stderr).trim()
+    logs: (stdout + '\n' + stderr).trim(),
+    tokens
   };
 }
 
@@ -243,6 +298,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         status: r.status,
         diff: r.diff,
         logs: r.logs,
+        tokens: r.tokens,
         mode: 'single'
       });
       return {
@@ -262,6 +318,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         status: r.status,
         diff: r.diff,
         logs: r.logs,
+        tokens: r.tokens,
         mode: 'single'
       });
       return {
@@ -283,6 +340,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         status: 'Dual Completed',
         diff: codexRes.diff,
         logs: `=== CODEX LOGS ===\n${codexRes.logs}\n\n=== DEEPSEEK LOGS ===\n${deepseekRes.logs}`,
+        tokens: {
+          total_tokens: (codexRes.tokens?.total_tokens || 0) + (deepseekRes.tokens?.total_tokens || 0),
+          input_tokens: (codexRes.tokens?.input_tokens || 0) + (deepseekRes.tokens?.input_tokens || 0),
+          cached_input_tokens: (codexRes.tokens?.cached_input_tokens || 0),
+          output_tokens: (codexRes.tokens?.output_tokens || 0) + (deepseekRes.tokens?.output_tokens || 0)
+        },
         mode: 'both',
         codex: codexRes,
         deepseek: deepseekRes
