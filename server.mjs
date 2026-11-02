@@ -185,9 +185,14 @@ async function executeDeepSeek(target, prompt, branchName) {
     await execAsync(`git checkout -b ${branchName}`, { cwd: target });
   } catch (e) {}
 
+  const taskType = detectTaskType(prompt);
   const { stdout: fileList } = await execAsync('git ls-files | head -n 40', { cwd: target });
 
-  const systemPrompt = `You are an expert software engineer. Given a user task and workspace files, generate the necessary code changes.
+  const systemPrompt = taskType === 'general'
+    ? `You are an expert AI advisor and assistant. The user is asking a general planning, advisory, or analytical question.
+Provide a clear, detailed, well-structured, and comprehensive response in the requested language (e.g. Thai).
+Do NOT format your response as code files or file: blocks unless specifically requested.`
+    : `You are an expert software engineer. Given a user task and workspace files, generate the necessary code changes.
 Format your response using this syntax:
 
 file:path/to/file.ext
@@ -195,6 +200,10 @@ file:path/to/file.ext
 <complete file content here>
 \`\`\`
 `;
+
+  const userContent = taskType === 'general'
+    ? prompt
+    : `Workspace files:\n${fileList}\n\nTask:\n${prompt}`;
 
   const res = await fetch(KMITL_API_URL, {
     method: 'POST',
@@ -206,7 +215,7 @@ file:path/to/file.ext
       model: DEEPSEEK_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Workspace files:\n${fileList}\n\nTask:\n${prompt}` }
+        { role: 'user', content: userContent }
       ],
       stream: true
     })
@@ -286,8 +295,19 @@ async function executeCodex(target, prompt, branchName) {
     await execAsync(`git checkout -b ${branchName}`, { cwd: target });
   } catch (e) {}
 
+  const taskType = detectTaskType(prompt);
+  const effectivePrompt = taskType === 'general'
+    ? `[TASK TYPE: GENERAL CONSULTATION / ADVISORY / PLANNING]
+Note: This is a general query, planning, or advisory question (NOT a file-editing code task).
+Please respond directly, thoroughly, and comprehensively to the user's question in the requested language (e.g. Thai).
+Do NOT attempt to search workspace files with rg/find or edit files unless explicitly instructed.
+
+User Question:
+${prompt}`
+    : prompt;
+
   const promptFile = `/tmp/codex_mcp_prompt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.txt`;
-  fs.writeFileSync(promptFile, prompt, 'utf8');
+  fs.writeFileSync(promptFile, effectivePrompt, 'utf8');
 
   const codexCmd = `cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" -`;
 
@@ -315,6 +335,47 @@ async function executeCodex(target, prompt, branchName) {
     logs: (stdout + '\n' + stderr).trim(),
     tokens
   };
+}
+
+function detectTaskType(prompt) {
+  if (!prompt) return 'general';
+  const lower = prompt.toLowerCase();
+
+  const codeKeywords = [
+    'code', 'function', 'class', 'bug', 'fix', 'refactor', 'test',
+    'component', 'api', 'endpoint', 'npm', 'pip', 'python', 'javascript',
+    'typescript', 'svelte', 'react', 'css', 'html', 'git', 'repo',
+    'docker', 'database', 'sql', 'script', 'compile', 'build', 'import',
+    'เขียนโค้ด', 'แก้โค้ด', 'แก้บั๊ก', 'สร้างไฟล์', 'ลบไฟล์', 'คอมไพล์',
+    'เพิ่มฟังก์ชัน', 'เขียนโปรแกรม', 'สร้างคอมโพเนนต์', 'รันสคริปต์'
+  ];
+
+  const generalKeywords = [
+    'เที่ยว', 'แพลน', 'เดินทาง', 'อาหาร', 'กิน', 'งบ', 'ประเมินงบ',
+    'แนะนำ', 'คิดว่า', 'ความเห็น', 'ทำไม', 'อย่างไร', 'คืออะไร',
+    'แปล', 'บทความ', 'แต่ง', 'เล่า', 'ประวัติ', 'วางแผน', 'เปรียบเทียบ',
+    'travel', 'trip', 'budget', 'plan', 'why', 'what is', 'explain',
+    'recommend', 'compare', 'opinion', 'summarize'
+  ];
+
+  let codeScore = 0;
+  let generalScore = 0;
+
+  for (const kw of codeKeywords) {
+    if (lower.includes(kw)) codeScore++;
+  }
+  for (const kw of generalKeywords) {
+    if (lower.includes(kw)) generalScore++;
+  }
+
+  if (generalScore > 0 && codeScore === 0) return 'general';
+  if (codeScore > generalScore) return 'code';
+
+  if (/[{}<>;`$]/.test(prompt) || /\b(src|app|lib|test|index|package)\b/i.test(prompt)) {
+    return 'code';
+  }
+
+  return codeScore > 0 ? 'code' : 'general';
 }
 
 function slugifyPrompt(prompt) {

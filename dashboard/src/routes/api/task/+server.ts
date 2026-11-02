@@ -5,6 +5,7 @@ import util from 'util';
 import path from 'path';
 import fs from 'fs';
 import { saveTaskToHistory } from '../../../lib/history';
+import { detectTaskType } from '../../../lib/types';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
@@ -56,8 +57,19 @@ async function runCodexTask(target: string, prompt: string, branchName: string) 
 		await execAsync(`git checkout -b ${branchName}`, { cwd: target });
 	} catch (e) {}
 
+	const taskType = detectTaskType(prompt);
+	const effectivePrompt = taskType === 'general'
+		? `[TASK TYPE: GENERAL CONSULTATION / ADVISORY / PLANNING]
+Note: This is a general query, planning, or advisory question (NOT a file-editing code task).
+Please respond directly, thoroughly, and comprehensively to the user's question in the requested language (e.g. Thai).
+Do NOT attempt to search workspace files with rg/find or edit files unless explicitly instructed.
+
+User Question:
+${prompt}`
+		: prompt;
+
 	const promptFile = `/tmp/codex_prompt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.txt`;
-	fs.writeFileSync(promptFile, prompt, 'utf8');
+	fs.writeFileSync(promptFile, effectivePrompt, 'utf8');
 
 	const codexCmd = `cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" -`;
 
@@ -93,9 +105,14 @@ async function runDeepSeekTask(target: string, prompt: string, branchName: strin
 		await execAsync(`git checkout -b ${branchName}`, { cwd: target });
 	} catch (e) {}
 
+	const taskType = detectTaskType(prompt);
 	const { stdout: fileList } = await execAsync('git ls-files | head -n 40', { cwd: target });
 	
-	const systemPrompt = `You are an expert software engineer. Given a user task and workspace files, generate the necessary code changes.
+	const systemPrompt = taskType === 'general'
+		? `You are an expert AI advisor and assistant. The user is asking a general planning, advisory, or analytical question.
+Provide a clear, detailed, well-structured, and comprehensive response in the requested language (e.g. Thai).
+Do NOT format your response as code files or file: blocks unless specifically requested.`
+		: `You are an expert software engineer. Given a user task and workspace files, generate the necessary code changes.
 For each file you create or modify, format your response strictly using this syntax:
 
 file:path/to/file.ext
@@ -104,6 +121,10 @@ file:path/to/file.ext
 \`\`\`
 
 Do not output git diff markers directly, just output the complete file contents inside the file: block.`;
+
+	const userContent = taskType === 'general'
+		? prompt
+		: `Workspace files:\n${fileList}\n\nTask:\n${prompt}`;
 
 	const res = await fetch(KMITL_API_URL, {
 		method: 'POST',
@@ -115,7 +136,7 @@ Do not output git diff markers directly, just output the complete file contents 
 			model: DEEPSEEK_MODEL,
 			messages: [
 				{ role: 'system', content: systemPrompt },
-				{ role: 'user', content: `Workspace files:\n${fileList}\n\nTask:\n${prompt}` }
+				{ role: 'user', content: userContent }
 			],
 			stream: true
 		})

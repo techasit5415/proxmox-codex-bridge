@@ -78,6 +78,47 @@ export function slugifyPrompt(prompt: string): string {
 	return `temp-${clean || 'scratch'}-${id}`;
 }
 
+export function detectTaskType(prompt: string): 'code' | 'general' {
+	if (!prompt) return 'general';
+	const lower = prompt.toLowerCase();
+
+	const codeKeywords = [
+		'code', 'function', 'class', 'bug', 'fix', 'refactor', 'test',
+		'component', 'api', 'endpoint', 'npm', 'pip', 'python', 'javascript',
+		'typescript', 'svelte', 'react', 'css', 'html', 'git', 'repo',
+		'docker', 'database', 'sql', 'script', 'compile', 'build', 'import',
+		'เขียนโค้ด', 'แก้โค้ด', 'แก้บั๊ก', 'สร้างไฟล์', 'ลบไฟล์', 'คอมไพล์',
+		'เพิ่มฟังก์ชัน', 'เขียนโปรแกรม', 'สร้างคอมโพเนนต์', 'รันสคริปต์'
+	];
+
+	const generalKeywords = [
+		'เที่ยว', 'แพลน', 'เดินทาง', 'อาหาร', 'กิน', 'งบ', 'ประเมินงบ',
+		'แนะนำ', 'คิดว่า', 'ความเห็น', 'ทำไม', 'อย่างไร', 'คืออะไร',
+		'แปล', 'บทความ', 'แต่ง', 'เล่า', 'ประวัติ', 'วางแผน', 'เปรียบเทียบ',
+		'travel', 'trip', 'budget', 'plan', 'why', 'what is', 'explain',
+		'recommend', 'compare', 'opinion', 'summarize'
+	];
+
+	let codeScore = 0;
+	let generalScore = 0;
+
+	for (const kw of codeKeywords) {
+		if (lower.includes(kw)) codeScore++;
+	}
+	for (const kw of generalKeywords) {
+		if (lower.includes(kw)) generalScore++;
+	}
+
+	if (generalScore > 0 && codeScore === 0) return 'general';
+	if (codeScore > generalScore) return 'code';
+
+	if (/[{}<>;`$]/.test(prompt) || /\b(src|app|lib|test|index|package)\b/i.test(prompt)) {
+		return 'code';
+	}
+
+	return codeScore > 0 ? 'code' : 'general';
+}
+
 export function extractThoughtAndBody(raw: string): { thoughts: string; body: string } {
 	if (!raw) return { thoughts: '', body: '' };
 

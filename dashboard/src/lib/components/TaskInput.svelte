@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Play, RefreshCw, Layers, Clock, Plus } from 'lucide-svelte';
+	import { Play, RefreshCw, Layers, Clock, Plus, Code, Sparkles } from 'lucide-svelte';
+	import { detectTaskType } from '../types';
 
 	interface Props {
 		prompt: string;
@@ -46,8 +47,20 @@
 	{/if}
 
 	<div class="flex items-center justify-between text-xs flex-wrap gap-2">
-		<div class="flex items-center gap-1.5">
+		<div class="flex items-center gap-2">
 			<span class="font-medium text-zinc-300">Prompt</span>
+			{#if prompt.trim()}
+				{@const taskType = detectTaskType(prompt)}
+				<span class="text-[10px] px-2 py-0.5 rounded-full font-mono flex items-center gap-1 transition {taskType === 'code' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60' : 'bg-amber-950/80 text-amber-300 border border-amber-800/60'}">
+					{#if taskType === 'code'}
+						<Code class="w-2.5 h-2.5" />
+						<span>Code Task</span>
+					{:else}
+						<Sparkles class="w-2.5 h-2.5" />
+						<span>General / Planning</span>
+					{/if}
+				</span>
+			{/if}
 		</div>
 
 		<!-- Segmented Control: Choose Provider -->
