@@ -11,7 +11,12 @@
 		Copy, 
 		Check,
 		RefreshCw,
-		Layers
+		Layers,
+		Search,
+		Brain,
+		ChevronDown,
+		ChevronRight,
+		SlidersHorizontal
 	} from 'lucide-svelte';
 
 	interface TokenStats {
@@ -78,10 +83,15 @@
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
 
 	// Execution outputs
-	let activeTab = $state<'diff' | 'deepseek_diff' | 'logs' | 'deepseek_logs' | 'files'>('diff');
+	let activeTab = $state<'diff' | 'deepseek_diff' | 'thoughts' | 'logs' | 'files'>('thoughts');
 	let singleResult = $state<TaskResult | null>(null);
 	let dualCodex = $state<TaskResult | null>(null);
 	let dualDeepSeek = $state<TaskResult | null>(null);
+
+	// Search & Filter state for logs & thoughts
+	let searchQuery = $state<string>('');
+	let logFilter = $state<'all' | 'thoughts' | 'exec' | 'error'>('all');
+	let expandThoughts = $state<boolean>(true);
 
 	// Tokens
 	let tokenStats = $state<TokenStats | null>(null);
@@ -162,14 +172,13 @@
 					dualCodex = data.codex;
 					dualDeepSeek = data.deepseek;
 					singleResult = null;
-					activeTab = 'diff';
 				} else {
 					singleResult = data;
 					dualCodex = null;
 					dualDeepSeek = null;
-					activeTab = 'diff';
 				}
 
+				activeTab = 'thoughts';
 				fetchWorkspaceDetails(activeWs);
 				fetchStatus();
 			} else {
@@ -257,6 +266,70 @@
 	function fmt(n: number | undefined): string {
 		if (n === undefined || n === null) return '0';
 		return n.toLocaleString();
+	}
+
+	// Extracts thought process and reasoning
+	function extractThoughtAndBody(raw: string) {
+		if (!raw) return { thoughts: '', body: '' };
+
+		// Check for DeepSeek <think>...</think>
+		const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/i);
+		if (thinkMatch) {
+			return {
+				thoughts: thinkMatch[1].trim(),
+				body: raw.replace(/<think>[\s\S]*?<\/think>/i, '').trim()
+			};
+		}
+
+		// Check for Codex reasoning / planning blocks
+		if (raw.includes('OpenAI Codex') || raw.includes('exec\n')) {
+			const lines = raw.split('\n');
+			const thoughts: string[] = [];
+			const other: string[] = [];
+
+			for (const line of lines) {
+				if (line.startsWith('codex') || line.startsWith('user') || line.includes('I’ll') || line.includes("I'll") || line.includes('Created')) {
+					thoughts.push(line);
+				} else {
+					other.push(line);
+				}
+			}
+
+			return {
+				thoughts: thoughts.join('\n'),
+				body: other.join('\n')
+			};
+		}
+
+		return { thoughts: '', body: raw };
+	}
+
+	function getActiveRawLogs(): string {
+		if (dualCodex && dualDeepSeek) {
+			return `=== CODEX LOGS ===\n${dualCodex.logs}\n\n=== DEEPSEEK R1 LOGS ===\n${dualDeepSeek.logs}`;
+		}
+		return singleResult?.logs || terminalLogs || '';
+	}
+
+	// Filtered lines with search query
+	function getFilteredLogLines(text: string): { line: string; matched: boolean }[] {
+		if (!text) return [];
+		const lines = text.split('\n');
+		const q = searchQuery.toLowerCase().trim();
+
+		return lines.map(line => {
+			const lower = line.toLowerCase();
+			let matchFilter = true;
+			if (logFilter === 'thoughts') matchFilter = lower.includes('think') || lower.includes('plan') || lower.includes('i will') || lower.includes('i’ll');
+			else if (logFilter === 'exec') matchFilter = lower.includes('exec') || lower.includes('$') || lower.includes('/bin/bash') || lower.includes('rg');
+			else if (logFilter === 'error') matchFilter = lower.includes('error') || lower.includes('fail');
+
+			const matchSearch = q ? lower.includes(q) : true;
+			return {
+				line,
+				matched: matchFilter && matchSearch
+			};
+		}).filter(item => item.matched);
 	}
 
 	onMount(() => {
@@ -454,11 +527,19 @@
 			</div>
 		</div>
 
-		<!-- Results Viewer with Side-by-Side or Dual Tabs -->
-		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 flex-1 flex flex-col overflow-hidden min-h-[440px]">
+		<!-- Results Viewer with Searchable Logs & Thought Inspector -->
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 flex-1 flex flex-col overflow-hidden min-h-[480px]">
 			<!-- Header Tabs -->
 			<div class="flex items-center justify-between border-b border-zinc-800 px-3 bg-zinc-950">
 				<div class="flex items-center overflow-x-auto text-xs">
+					<button 
+						onclick={() => (activeTab = 'thoughts')}
+						class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 flex items-center gap-1.5 {activeTab === 'thoughts' ? 'border-violet-400 text-violet-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+					>
+						<Brain class="w-3.5 h-3.5" />
+						<span>Thinking & Reasoning</span>
+					</button>
+
 					{#if dualCodex && dualDeepSeek}
 						<button 
 							onclick={() => (activeTab = 'diff')}
@@ -472,32 +553,21 @@
 						>
 							DeepSeek Diff ({dualDeepSeek.branch})
 						</button>
-						<button 
-							onclick={() => (activeTab = 'logs')}
-							class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'logs' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
-						>
-							Codex Logs
-						</button>
-						<button 
-							onclick={() => (activeTab = 'deepseek_logs')}
-							class="px-3 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'deepseek_logs' ? 'border-violet-400 text-violet-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
-						>
-							DeepSeek Logs
-						</button>
 					{:else}
 						<button 
 							onclick={() => (activeTab = 'diff')}
 							class="px-3.5 py-2.5 font-medium border-b-2 transition {activeTab === 'diff' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
 						>
-							Diff {singleResult?.branch ? `(${singleResult.branch})` : ''}
-						</button>
-						<button 
-							onclick={() => (activeTab = 'logs')}
-							class="px-3.5 py-2.5 font-medium border-b-2 transition {activeTab === 'logs' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
-						>
-							Agent Logs
+							Git Diff {singleResult?.branch ? `(${singleResult.branch})` : ''}
 						</button>
 					{/if}
+
+					<button 
+						onclick={() => (activeTab = 'logs')}
+						class="px-3.5 py-2.5 font-medium border-b-2 transition shrink-0 {activeTab === 'logs' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
+					>
+						Raw Logs
+					</button>
 					
 					<button 
 						onclick={() => (activeTab = 'files')}
@@ -528,16 +598,124 @@
 				</div>
 			</div>
 
+			<!-- Search & Filter Toolbar (for Thoughts and Logs) -->
+			{#if activeTab === 'thoughts' || activeTab === 'logs'}
+				<div class="px-3 py-2 bg-zinc-950/80 border-b border-zinc-800/80 flex items-center justify-between gap-3 text-xs flex-wrap">
+					<!-- Search Box -->
+					<div class="relative flex-1 min-w-[200px]">
+						<Search class="w-3.5 h-3.5 absolute left-2.5 top-2 text-zinc-500" />
+						<input 
+							type="text" 
+							bind:value={searchQuery}
+							placeholder="Search thoughts, commands, files, or errors..."
+							class="w-full pl-8 pr-3 py-1 bg-zinc-900 border border-zinc-800 rounded text-xs font-mono text-zinc-200 focus:outline-none focus:border-zinc-700 placeholder:text-zinc-600"
+						/>
+						{#if searchQuery}
+							<button onclick={() => (searchQuery = '')} class="absolute right-2.5 top-1.5 text-zinc-500 hover:text-zinc-300 text-[11px]">&times;</button>
+						{/if}
+					</div>
+
+					<!-- Filter Pills -->
+					<div class="flex items-center gap-1 text-[11px]">
+						<button 
+							onclick={() => (logFilter = 'all')}
+							class="px-2 py-0.5 rounded transition {logFilter === 'all' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+						>
+							All
+						</button>
+						<button 
+							onclick={() => (logFilter = 'thoughts')}
+							class="px-2 py-0.5 rounded transition {logFilter === 'thoughts' ? 'bg-violet-950/60 text-violet-300 border border-violet-800/60 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+						>
+							Thoughts
+						</button>
+						<button 
+							onclick={() => (logFilter = 'exec')}
+							class="px-2 py-0.5 rounded transition {logFilter === 'exec' ? 'bg-cyan-950/60 text-cyan-300 border border-cyan-800/60 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+						>
+							Exec/Commands
+						</button>
+						<button 
+							onclick={() => (logFilter = 'error')}
+							class="px-2 py-0.5 rounded transition {logFilter === 'error' ? 'bg-rose-950/60 text-rose-300 border border-rose-800/60 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+						>
+							Errors
+						</button>
+					</div>
+				</div>
+			{/if}
+
 			<!-- Tab Content Area -->
 			<div class="p-3.5 flex-1 overflow-auto bg-zinc-950 font-mono text-xs">
-				{#if activeTab === 'diff'}
+				<!-- THOUGHTS & REASONING TAB -->
+				{#if activeTab === 'thoughts'}
+					{@const logs = getActiveRawLogs()}
+					{@const parsed = extractThoughtAndBody(logs)}
+					
+					<div class="flex flex-col gap-3">
+						<!-- Model Thinking Card -->
+						{#if parsed.thoughts}
+							<div class="rounded-lg border border-violet-900/50 bg-violet-950/20 p-3.5 flex flex-col gap-2">
+								<button 
+									onclick={() => (expandThoughts = !expandThoughts)}
+									class="flex items-center justify-between text-violet-300 text-xs font-semibold"
+								>
+									<div class="flex items-center gap-1.5">
+										<Brain class="w-4 h-4 text-violet-400" />
+										<span>Chain of Thought / Model Reasoning</span>
+									</div>
+									<div class="flex items-center gap-1 text-[11px] text-violet-400">
+										<span>{expandThoughts ? 'Collapse' : 'Expand'}</span>
+										{#if expandThoughts}
+											<ChevronDown class="w-3.5 h-3.5" />
+										{:else}
+											<ChevronRight class="w-3.5 h-3.5" />
+										{/if}
+									</div>
+								</button>
+
+								{#if expandThoughts}
+									<div class="pt-2 border-t border-violet-900/30 text-violet-200/90 whitespace-pre-wrap leading-relaxed selection:bg-violet-500/25">
+										{parsed.thoughts}
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						<!-- Executed Actions / Solution Steps -->
+						<div class="flex flex-col gap-1.5">
+							<div class="text-zinc-500 text-[10px] uppercase tracking-wider font-semibold">Action Steps & Logged Events</div>
+							{#each getFilteredLogLines(parsed.body || logs) as item}
+								<div class="py-0.5 px-1.5 rounded transition {item.line.includes('exec') || item.line.includes('bash') ? 'text-cyan-300 bg-cyan-950/20' : item.line.includes('error') ? 'text-rose-400 bg-rose-950/20' : 'text-zinc-300'}">
+									{item.line}
+								</div>
+							{:else}
+								<div class="text-zinc-600 italic py-2">No matching events or thoughts found. Run a task to see reasoning.</div>
+							{/each}
+						</div>
+					</div>
+
+				<!-- DIFF TAB -->
+				{:else if activeTab === 'diff'}
 					<pre class="text-zinc-200 whitespace-pre-wrap leading-relaxed">{dualCodex ? dualCodex.diff : (singleResult?.diff || '(No diff recorded)')}</pre>
+
+				<!-- DEEPSEEK DIFF TAB -->
 				{:else if activeTab === 'deepseek_diff'}
 					<pre class="text-violet-200 whitespace-pre-wrap leading-relaxed">{dualDeepSeek?.diff || '(No diff recorded)'}</pre>
+
+				<!-- RAW LOGS TAB -->
 				{:else if activeTab === 'logs'}
-					<pre class="text-zinc-300 whitespace-pre-wrap leading-relaxed">{dualCodex ? dualCodex.logs : (singleResult?.logs || terminalLogs || '(No logs)')}</pre>
-				{:else if activeTab === 'deepseek_logs'}
-					<pre class="text-violet-200 whitespace-pre-wrap leading-relaxed">{dualDeepSeek?.logs || '(No logs)'}</pre>
+					<div class="flex flex-col gap-0.5">
+						{#each getFilteredLogLines(getActiveRawLogs()) as item}
+							<div class="py-0.5 px-1.5 rounded transition {item.line.includes('exec') ? 'text-cyan-300' : item.line.includes('error') ? 'text-rose-400' : 'text-zinc-300'}">
+								{item.line}
+							</div>
+						{:else}
+							<div class="text-zinc-600 italic py-2">No logs found.</div>
+						{/each}
+					</div>
+
+				<!-- FILES & COMMITS TAB -->
 				{:else if activeTab === 'files' && wsDetails}
 					<div class="flex flex-col gap-3.5 text-zinc-300">
 						<div>
@@ -588,9 +766,9 @@
 					/>
 				</div>
 				<div>
-					<label for="clone-folder-field" class="text-zinc-400 block mb-1 text-[11px]">Folder (optional)</label>
+					<label for="clone-target-folder" class="text-zinc-400 block mb-1 text-[11px]">Folder (optional)</label>
 					<input 
-						id="clone-folder-field"
+						id="clone-target-folder"
 						type="text" 
 						bind:value={cloneFolder}
 						placeholder="folder-name" 
