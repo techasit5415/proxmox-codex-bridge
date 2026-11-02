@@ -456,8 +456,16 @@
 		fetchStatus();
 		fetchWorkspaces();
 		await fetchHistory(true);
-		const interval = setInterval(fetchStatus, 6000);
-		return () => clearInterval(interval);
+		const statusInterval = setInterval(fetchStatus, 6000);
+		const historyInterval = setInterval(() => {
+			if (!selectedTaskId && !isExecuting) {
+				fetchHistory(false);
+			}
+		}, 8000);
+		return () => {
+			clearInterval(statusInterval);
+			clearInterval(historyInterval);
+		};
 	});
 </script>
 
