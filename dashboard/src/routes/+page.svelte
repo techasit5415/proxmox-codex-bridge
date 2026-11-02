@@ -333,7 +333,6 @@
 		}
 		if (data.history && data.history.length > 0) {
 			history = data.history;
-			selectHistoryTask(data.history[0]);
 		}
 
 		fetchStatus();
@@ -350,13 +349,7 @@
 					const res = await fetch('/api/history');
 					if (res.ok) {
 						const d = await res.json();
-						const newHistory: TaskRecord[] = d.history || [];
-						if (newHistory.length > 0 && (!history.length || newHistory[0].id !== history[0].id)) {
-							history = newHistory;
-							selectHistoryTask(newHistory[0]);
-						} else {
-							history = newHistory;
-						}
+						history = d.history || [];
 					}
 				} catch (e) {}
 			}
