@@ -1,0 +1,8 @@
+node_modules/
+workspaces/
+tasks_history.json
+.svelte-kit/
+build/
+.DS_Store
+*.pyc
+__pycache__/
