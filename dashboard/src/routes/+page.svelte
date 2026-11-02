@@ -619,6 +619,8 @@
 							<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
 						{/if}
 					</button>
+				{:else}
+					<div class="text-[11px] text-zinc-600 italic py-2 text-center font-mono">No workspaces yet. Click Clone to add one.</div>
 				{/each}
 			</div>
 		</div>
