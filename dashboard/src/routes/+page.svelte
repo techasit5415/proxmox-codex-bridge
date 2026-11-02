@@ -6,25 +6,25 @@
 		Play, 
 		GitBranch, 
 		FileCode, 
-		Cpu, 
-		HardDrive, 
 		Plus, 
-		CheckCircle2, 
-		AlertCircle, 
-		RefreshCw, 
 		ExternalLink, 
 		Copy, 
 		Check,
-		Zap,
-		Coins,
-		Database
+		RefreshCw
 	} from 'lucide-svelte';
 
-	interface TokenUsage {
-		total_tokens: number;
-		input_tokens: number;
-		cached_input_tokens: number;
-		output_tokens: number;
+	interface TokenStats {
+		totalTokens: number;
+		inputTokens: number;
+		cachedTokens: number;
+		outputTokens: number;
+		sessionCount: number;
+		latest?: {
+			total_tokens: number;
+			input_tokens: number;
+			cached_input_tokens: number;
+			output_tokens: number;
+		};
 	}
 
 	interface SystemStatus {
@@ -34,18 +34,22 @@
 		memoryUsage: string;
 		nodeVersion: string;
 		codexVersion: string;
-		tokens?: TokenUsage;
+		tokens?: TokenStats;
 	}
 
 	interface WorkspaceDetails {
 		name: string;
 		branch: string;
-		status: string;
+		clean: boolean;
+		statusSummary: string;
+		modifiedCount: number;
+		untrackedCount: number;
+		rawStatus: string;
 		recentCommits: string[];
 		files: string[];
 	}
 
-	// State (Svelte 5 Runes)
+	// State (Svelte 5 Runes) - Zero hardcoded numbers
 	let status = $state<SystemStatus | null>(null);
 	let workspaces = $state<string[]>([]);
 	let activeWs = $state<string>('Android-Tv');
@@ -57,17 +61,12 @@
 	let taskBadge = $state<string>('Ready');
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
 
-	let diffResult = $state<string>('// Git diff will appear here after task execution...');
-	let logsResult = $state<string>('// Agent reasoning logs and test runner stdout will appear here...');
+	let diffResult = $state<string>('');
+	let logsResult = $state<string>('');
 	let activeTab = $state<'diff' | 'logs' | 'files'>('diff');
 
-	// Tokens state
-	let currentTokens = $state<TokenUsage>({
-		total_tokens: 29648,
-		input_tokens: 29525,
-		cached_input_tokens: 24576,
-		output_tokens: 123
-	});
+	// Real dynamic token stats from server
+	let tokenStats = $state<TokenStats | null>(null);
 
 	// Clone Modal
 	let showCloneModal = $state<boolean>(false);
@@ -75,7 +74,7 @@
 	let cloneFolder = $state<string>('');
 	let isCloning = $state<boolean>(false);
 
-	// Quick Terminal
+	// Terminal
 	let quickCmd = $state<string>('');
 	let isRunningCmd = $state<boolean>(false);
 	let copied = $state<boolean>(false);
@@ -85,8 +84,8 @@
 			const res = await fetch('/api/status');
 			if (res.ok) {
 				status = await res.json();
-				if (status?.tokens && status.tokens.total_tokens > 0) {
-					currentTokens = status.tokens;
+				if (status?.tokens) {
+					tokenStats = status.tokens;
 				}
 			}
 		} catch (e) {
@@ -125,9 +124,9 @@
 	}
 
 	async function executeTask() {
-		if (!prompt.trim()) return alert('Please enter instructions for Codex');
+		if (!prompt.trim() || isExecuting) return;
 		isExecuting = true;
-		taskBadge = 'Executing in Sandbox...';
+		taskBadge = 'Running...';
 		taskBadgeType = 'running';
 
 		try {
@@ -139,19 +138,18 @@
 			const data = await res.json();
 
 			if (data.success) {
-				taskBadge = `Completed (${data.branch})`;
+				taskBadge = `Done (${data.branch})`;
 				taskBadgeType = 'success';
 				diffResult = data.diff;
 				logsResult = data.logs;
-				if (data.tokens && data.tokens.total_tokens > 0) {
-					currentTokens = data.tokens;
-				}
 				activeTab = 'diff';
+				prompt = '';
 				fetchWorkspaceDetails(activeWs);
+				fetchStatus();
 			} else {
-				taskBadge = 'Execution Failed';
+				taskBadge = 'Failed';
 				taskBadgeType = 'error';
-				logsResult = data.error || 'Unknown error';
+				logsResult = data.error || 'Execution failed';
 				activeTab = 'logs';
 			}
 		} catch (err: any) {
@@ -161,7 +159,12 @@
 			activeTab = 'logs';
 		} finally {
 			isExecuting = false;
-			fetchStatus();
+		}
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			executeTask();
 		}
 	}
 
@@ -169,7 +172,7 @@
 		if (!quickCmd.trim()) return;
 		isRunningCmd = true;
 		activeTab = 'logs';
-		logsResult = `> ${quickCmd}\nRunning in /opt/agent-bridge/workspaces/${activeWs}...\n`;
+		logsResult = `$ ${quickCmd}\n`;
 
 		try {
 			const res = await fetch('/api/terminal', {
@@ -178,7 +181,9 @@
 				body: JSON.stringify({ workspace: activeWs, command: quickCmd })
 			});
 			const data = await res.json();
-			logsResult = `> ${quickCmd}\n\n` + (data.output || data.error || '(no output)');
+			logsResult = `$ ${quickCmd}\n\n` + (data.output || data.error || '(no output)');
+			quickCmd = '';
+			fetchWorkspaceDetails(activeWs);
 		} catch (err: any) {
 			logsResult += `\nError: ${err.message}`;
 		} finally {
@@ -187,7 +192,7 @@
 	}
 
 	async function handleClone() {
-		if (!cloneUrl.trim()) return alert('Git URL is required');
+		if (!cloneUrl.trim()) return;
 		isCloning = true;
 
 		try {
@@ -203,292 +208,249 @@
 				cloneFolder = '';
 				fetchWorkspaces();
 			} else {
-				alert(`Clone failed: ${data.error}`);
+				alert(data.error);
 			}
 		} catch (err: any) {
-			alert(`Clone error: ${err.message}`);
+			alert(err.message);
 		} finally {
 			isCloning = false;
 		}
 	}
 
 	function copyDiff() {
+		if (!diffResult) return;
 		navigator.clipboard.writeText(diffResult);
 		copied = true;
 		setTimeout(() => (copied = false), 2000);
 	}
 
-	function formatNumber(num: number): string {
-		return num.toLocaleString();
+	function fmt(n: number | undefined): string {
+		if (n === undefined || n === null) return '0';
+		return n.toLocaleString();
 	}
 
 	onMount(() => {
 		fetchStatus();
 		fetchWorkspaces();
-		const interval = setInterval(fetchStatus, 8000);
+		const interval = setInterval(fetchStatus, 6000);
 		return () => clearInterval(interval);
 	});
 </script>
 
-<!-- Top Navbar -->
-<header class="sticky top-0 z-40 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md px-6 py-3.5 flex items-center justify-between">
-	<div class="flex items-center space-x-3.5">
-		<div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center font-black text-white shadow-lg shadow-indigo-500/25 ring-1 ring-white/20">
-			⚡
-		</div>
-		<div>
-			<div class="flex items-center gap-2">
-				<h1 class="font-bold text-sm text-zinc-100 tracking-tight">Codex Agent Platform</h1>
-				<span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-					<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-					Proxmox CT 24/7
-				</span>
-			</div>
-			<p class="text-[11px] text-zinc-400">SvelteKit &bull; TypeScript &bull; Tailwind &bull; shadcn</p>
-		</div>
+<!-- Top Minimal Navbar -->
+<header class="border-b border-zinc-800 bg-zinc-950 px-5 py-3 flex items-center justify-between text-xs">
+	<div class="flex items-center gap-3">
+		<span class="font-bold text-sm tracking-tight text-zinc-100">codex</span>
+		<span class="text-zinc-600">/</span>
+		<span class="font-mono text-zinc-300 font-medium">{activeWs}</span>
 	</div>
 
-	<!-- System Badges -->
-	<div class="flex items-center gap-3 text-xs font-mono">
-		<!-- Token Counter Badge in Header -->
-		<div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 font-semibold shadow-sm">
-			<Zap class="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
-			<span>Tokens: <strong>{formatNumber(currentTokens.total_tokens)}</strong></span>
+	<!-- System & Live Token Stats -->
+	<div class="flex items-center gap-3 font-mono text-[11px] text-zinc-400">
+		<div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
+			<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+			<span>{status?.codexAuth || 'Checking'}</span>
 		</div>
 
-		<div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
-			<CheckCircle2 class="w-3.5 h-3.5 text-emerald-400" />
-			<span>{status?.codexAuth || 'Checking...'}</span>
+		{#if tokenStats}
+			<div class="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
+				<span class="text-zinc-500">Tokens:</span>
+				<strong class="text-zinc-100">{fmt(tokenStats.totalTokens)}</strong>
+			</div>
+		{/if}
+
+		<div class="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
+			<span class="text-zinc-500">Disk:</span>
+			<span>{status?.diskUsage || '...'}</span>
 		</div>
-		<div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400">
-			<HardDrive class="w-3.5 h-3.5 text-zinc-500" />
-			<span>Disk: <strong class="text-zinc-200">{status?.diskUsage || '...'}</strong></span>
+
+		<div class="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
+			<span class="text-zinc-500">RAM:</span>
+			<span>{status?.memoryUsage || '...'}</span>
 		</div>
-		<div class="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400">
-			<Cpu class="w-3.5 h-3.5 text-zinc-500" />
-			<span>RAM: <strong class="text-zinc-200">{status?.memoryUsage || '...'}</strong></span>
-		</div>
+
 		<a 
 			href="https://github.com/techasit5415/proxmox-codex-bridge" 
 			target="_blank" 
 			rel="noreferrer"
-			class="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 transition flex items-center gap-1.5"
+			class="text-zinc-400 hover:text-zinc-200 transition flex items-center gap-1 pl-1"
 		>
-			<span>GitHub</span>
+			<span>Repo</span>
 			<ExternalLink class="w-3 h-3 text-zinc-500" />
 		</a>
 	</div>
 </header>
 
-<!-- Main Layout -->
-<div class="flex-1 max-w-7xl w-full mx-auto p-6 flex flex-col lg:flex-row gap-6">
+<!-- Workspace & Task Grid -->
+<div class="flex-1 max-w-7xl w-full mx-auto p-5 flex flex-col lg:flex-row gap-5">
 
-	<!-- Left Sidebar: Workspaces & Quick Cmd -->
-	<aside class="w-full lg:w-72 flex flex-col gap-5 shrink-0">
-		<!-- Workspaces Card -->
-		<div class="rounded-xl border border-zinc-800 bg-zinc-900/40 backdrop-blur p-4 flex flex-col gap-3 shadow-sm">
-			<div class="flex items-center justify-between">
-				<div class="flex items-center gap-2">
-					<FolderGit2 class="w-4 h-4 text-indigo-400" />
-					<h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Workspaces</h2>
-				</div>
+	<!-- Left Sidebar: Workspaces & Repo Info -->
+	<aside class="w-full lg:w-64 flex flex-col gap-4 shrink-0">
+		
+		<!-- Workspaces List -->
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3.5 flex flex-col gap-2.5">
+			<div class="flex items-center justify-between text-xs">
+				<span class="font-medium text-zinc-400">Workspaces</span>
 				<button 
 					onclick={() => (showCloneModal = true)}
-					class="px-2.5 py-1 text-xs rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition flex items-center gap-1 shadow-sm"
+					class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition flex items-center gap-1"
 				>
-					<Plus class="w-3 h-3" />
+					<Plus class="w-2.5 h-2.5" />
 					<span>Clone</span>
 				</button>
 			</div>
 
-			<div class="flex flex-col gap-1 max-h-64 overflow-y-auto pr-1">
-				{#if workspaces.length === 0}
-					<div class="text-xs text-zinc-500 italic py-2">No workspaces found</div>
-				{:else}
-					{#each workspaces as ws}
-						<button 
-							onclick={() => selectWorkspace(ws)}
-							class="w-full text-left px-3 py-2 rounded-lg text-xs font-mono transition flex items-center justify-between {ws === activeWs ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'}"
-						>
-							<span class="truncate">{ws}</span>
-							{#if ws === activeWs}
-								<span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
-							{/if}
-						</button>
-					{/each}
-				{/if}
+			<div class="flex flex-col gap-1">
+				{#each workspaces as ws}
+					<button 
+						onclick={() => selectWorkspace(ws)}
+						class="w-full text-left px-2.5 py-1.5 rounded text-xs font-mono transition flex items-center justify-between {ws === activeWs ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}"
+					>
+						<span class="truncate">{ws}</span>
+						{#if ws === activeWs}
+							<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+						{/if}
+					</button>
+				{/each}
 			</div>
 		</div>
 
-		<!-- Workspace Summary -->
+		<!-- Active Repo Status -->
 		{#if wsDetails}
-			<div class="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2.5 text-xs">
-				<div class="flex items-center gap-1.5 font-semibold text-zinc-300">
-					<GitBranch class="w-3.5 h-3.5 text-indigo-400" />
-					<span class="font-mono">{wsDetails.branch}</span>
+			<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3.5 flex flex-col gap-2 text-xs">
+				<div class="flex items-center justify-between font-mono">
+					<div class="flex items-center gap-1.5 text-zinc-300">
+						<GitBranch class="w-3 h-3 text-zinc-400" />
+						<span class="font-semibold">{wsDetails.branch}</span>
+					</div>
+					<span class="text-[10px] px-1.5 py-0.5 rounded font-mono {wsDetails.clean ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-300 border border-amber-500/20'}">
+						{wsDetails.statusSummary}
+					</span>
 				</div>
-				<div class="text-[11px] text-zinc-400">Status: <span class="text-zinc-200 font-mono">{wsDetails.status}</span></div>
-				<div class="border-t border-zinc-800/80 pt-2 text-[11px] text-zinc-500">
-					Files: <span class="text-zinc-300 font-mono">{wsDetails.files.length} items</span>
+
+				<div class="text-[11px] text-zinc-500 flex justify-between pt-1 border-t border-zinc-800/60 font-mono">
+					<span>Tracked Files</span>
+					<span class="text-zinc-300">{wsDetails.files.length}</span>
 				</div>
 			</div>
 		{/if}
 
-		<!-- Quick Terminal Card -->
-		<div class="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-3 shadow-sm">
-			<div class="flex items-center gap-2">
-				<Terminal class="w-4 h-4 text-emerald-400" />
-				<h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Quick Terminal</h2>
-			</div>
-			<div class="flex flex-col gap-2">
+		<!-- Minimal Command Line -->
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 flex flex-col gap-2">
+			<span class="text-[11px] font-medium text-zinc-400">Quick Command</span>
+			<div class="flex gap-1.5">
 				<input 
 					type="text" 
 					bind:value={quickCmd}
 					placeholder="npm test, git status..."
 					onkeydown={(e) => e.key === 'Enter' && runTerminalCommand()}
-					class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 placeholder:text-zinc-600"
+					class="w-full px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-xs font-mono text-zinc-200 focus:outline-none focus:border-zinc-700 placeholder:text-zinc-600"
 				/>
 				<button 
 					onclick={runTerminalCommand}
 					disabled={isRunningCmd}
-					class="w-full py-1.5 px-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-xs font-medium text-zinc-300 transition flex items-center justify-center gap-1.5"
+					class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-xs rounded font-medium text-zinc-300 transition"
 				>
-					{#if isRunningCmd}
+					{isRunningCmd ? '...' : 'Run'}
+				</button>
+			</div>
+		</div>
+
+	</aside>
+
+	<!-- Main Task & Results Area -->
+	<main class="flex-1 flex flex-col gap-4 min-w-0">
+
+		<!-- Task Input Card -->
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-4 flex flex-col gap-3">
+			<div class="flex items-center justify-between text-xs">
+				<span class="font-medium text-zinc-300">Prompt</span>
+				<span class="font-mono text-[11px] text-zinc-500">gpt-6.1-sol &bull; 475k ctx</span>
+			</div>
+
+			<textarea 
+				bind:value={prompt}
+				onkeydown={handleKeydown}
+				rows="3"
+				placeholder="What should Codex do? (⌘+Enter to execute)"
+				class="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-zinc-700 resize-none font-mono placeholder:text-zinc-600 leading-relaxed"
+			></textarea>
+
+			<div class="flex items-center justify-between gap-3 pt-0.5">
+				<input 
+					type="text" 
+					bind:value={branch}
+					placeholder="Branch: auto (or specify)"
+					class="px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded text-xs font-mono text-zinc-300 focus:outline-none focus:border-zinc-700 placeholder:text-zinc-600 w-48"
+				/>
+
+				<button 
+					onclick={executeTask}
+					disabled={isExecuting || !prompt.trim()}
+					class="px-4 py-1.5 rounded-lg bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-semibold text-xs transition flex items-center gap-1.5 cursor-pointer"
+				>
+					{#if isExecuting}
 						<RefreshCw class="w-3 h-3 animate-spin" />
 						<span>Executing...</span>
 					{:else}
-						<span>Run in Workspace</span>
+						<Play class="w-3 h-3 fill-current" />
+						<span>Execute</span>
 					{/if}
 				</button>
 			</div>
 		</div>
-	</aside>
 
-	<!-- Main Execution and Review Area -->
-	<main class="flex-1 flex flex-col gap-5 min-w-0">
-
-		<!-- Task Dispatcher Card (shadcn Card) -->
-		<div class="rounded-xl border border-zinc-800 bg-zinc-900/50 backdrop-blur p-5 flex flex-col gap-4 shadow-xl">
-			<div class="flex items-center justify-between flex-wrap gap-2">
-				<div>
-					<h3 class="font-bold text-sm text-zinc-100 flex items-center gap-2">
-						<span>🚀 Dispatch Autonomous Codex Task</span>
-					</h3>
-					<p class="text-xs text-zinc-400">Target Workspace: <span class="font-mono text-indigo-400 font-semibold">{activeWs}</span></p>
+		<!-- Live Token Metric Strip (Clean Single Row) -->
+		{#if tokenStats}
+			<div class="rounded-lg border border-zinc-800 bg-zinc-900/20 px-4 py-2.5 flex items-center justify-between text-[11px] font-mono text-zinc-400 overflow-x-auto gap-4">
+				<div class="flex items-center gap-1.5">
+					<span class="text-zinc-500">Cumulative:</span>
+					<strong class="text-zinc-200">{fmt(tokenStats.totalTokens)}</strong>
 				</div>
-				<div class="flex items-center gap-2">
-					<span class="text-[11px] px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium">
-						ChatGPT Plus &bull; gpt-6.1-sol
+				<div class="flex items-center gap-1.5">
+					<span class="text-zinc-500">Last Task:</span>
+					<strong class="text-zinc-200">{fmt(tokenStats.latest?.total_tokens)}</strong>
+				</div>
+				<div class="flex items-center gap-1.5">
+					<span class="text-zinc-500">Cached:</span>
+					<span class="text-emerald-400 font-medium">
+						{fmt(tokenStats.latest?.cached_input_tokens)} 
+						({Math.round(((tokenStats.latest?.cached_input_tokens || 0) / (tokenStats.latest?.input_tokens || 1)) * 100)}%)
 					</span>
 				</div>
-			</div>
-
-			<div class="flex flex-col gap-3">
-				<textarea 
-					bind:value={prompt}
-					rows="3"
-					placeholder="Describe instructions for Codex (e.g. Create a new REST endpoint /api/users with JWT auth and write unit tests)..."
-					class="w-full p-3.5 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none font-sans leading-relaxed placeholder:text-zinc-600"
-				></textarea>
-
-				<div class="flex items-center justify-between flex-wrap gap-2 pt-1">
-					<div class="flex items-center gap-2">
-						<input 
-							type="text" 
-							bind:value={branch}
-							placeholder="Custom branch name (optional)"
-							class="px-3 py-1.5 bg-zinc-950 border border-zinc-800 rounded-md text-xs font-mono text-zinc-300 focus:outline-none focus:border-indigo-500 placeholder:text-zinc-600 w-56"
-						/>
-					</div>
-					<button 
-						onclick={executeTask}
-						disabled={isExecuting}
-						class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center gap-2 cursor-pointer"
-					>
-						{#if isExecuting}
-							<RefreshCw class="w-3.5 h-3.5 animate-spin" />
-							<span>Running in Container...</span>
-						{:else}
-							<Play class="w-3.5 h-3.5 fill-current" />
-							<span>Execute with Codex</span>
-						{/if}
-					</button>
+				<div class="flex items-center gap-1.5">
+					<span class="text-zinc-500">Output:</span>
+					<span class="text-zinc-300">{fmt(tokenStats.latest?.output_tokens)}</span>
+				</div>
+				<div class="flex items-center gap-1.5 text-zinc-500">
+					<span>Sessions:</span>
+					<span class="text-zinc-400">{tokenStats.sessionCount}</span>
 				</div>
 			</div>
-		</div>
+		{/if}
 
-		<!-- Live Token Usage Stat Grid (shadcn Metric Cards) -->
-		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
-				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
-					<Coins class="w-3.5 h-3.5 text-amber-400" />
-					<span>Total Tokens</span>
-				</div>
-				<div class="text-lg font-bold font-mono text-zinc-100">
-					{formatNumber(currentTokens.total_tokens)}
-				</div>
-				<div class="text-[10px] text-zinc-500">All turns combined</div>
-			</div>
-
-			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
-				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
-					<Database class="w-3.5 h-3.5 text-emerald-400" />
-					<span>Cached Tokens</span>
-				</div>
-				<div class="text-lg font-bold font-mono text-emerald-400 flex items-center gap-1.5">
-					<span>{formatNumber(currentTokens.cached_input_tokens)}</span>
-					<span class="text-[10px] font-sans px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-						{Math.round((currentTokens.cached_input_tokens / (currentTokens.input_tokens || 1)) * 100)}%
-					</span>
-				</div>
-				<div class="text-[10px] text-zinc-500">Fast cache hit</div>
-			</div>
-
-			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
-				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
-					<FileCode class="w-3.5 h-3.5 text-indigo-400" />
-					<span>Output Tokens</span>
-				</div>
-				<div class="text-lg font-bold font-mono text-indigo-400">
-					{formatNumber(currentTokens.output_tokens)}
-				</div>
-				<div class="text-[10px] text-zinc-500">Code produced</div>
-			</div>
-
-			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
-				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
-					<Zap class="w-3.5 h-3.5 text-violet-400" />
-					<span>Context Window</span>
-				</div>
-				<div class="text-lg font-bold font-mono text-zinc-200">
-					475,000
-				</div>
-				<div class="text-[10px] text-zinc-500">Max limit per task</div>
-			</div>
-		</div>
-
-		<!-- Results Viewer Tabs (shadcn Tabs) -->
-		<div class="rounded-xl border border-zinc-800 bg-zinc-900/50 flex-1 flex flex-col overflow-hidden shadow-xl min-h-[420px]">
-			<!-- Tab Navigation -->
-			<div class="flex items-center justify-between border-b border-zinc-800 px-4 bg-zinc-950/60">
-				<div class="flex items-center space-x-1">
+		<!-- Results Viewer -->
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 flex-1 flex flex-col overflow-hidden min-h-[420px]">
+			<!-- Header -->
+			<div class="flex items-center justify-between border-b border-zinc-800 px-3 bg-zinc-950">
+				<div class="flex items-center">
 					<button 
 						onclick={() => (activeTab = 'diff')}
-						class="px-4 py-3 text-xs font-semibold border-b-2 transition {activeTab === 'diff' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-zinc-400 hover:text-zinc-200'}"
+						class="px-3.5 py-2.5 text-xs font-medium border-b-2 transition {activeTab === 'diff' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
 					>
-						Git Diff
+						Diff
 					</button>
 					<button 
 						onclick={() => (activeTab = 'logs')}
-						class="px-4 py-3 text-xs font-semibold border-b-2 transition {activeTab === 'logs' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-zinc-400 hover:text-zinc-200'}"
+						class="px-3.5 py-2.5 text-xs font-medium border-b-2 transition {activeTab === 'logs' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
 					>
-						Agent Logs & Tests
+						Logs
 					</button>
 					<button 
 						onclick={() => (activeTab = 'files')}
-						class="px-4 py-3 text-xs font-semibold border-b-2 transition {activeTab === 'files' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-zinc-400 hover:text-zinc-200'}"
+						class="px-3.5 py-2.5 text-xs font-medium border-b-2 transition {activeTab === 'files' ? 'border-zinc-200 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300'}"
 					>
-						Files & History
+						Files & Commits
 					</button>
 				</div>
 
@@ -496,45 +458,45 @@
 					{#if activeTab === 'diff' && diffResult.trim()}
 						<button 
 							onclick={copyDiff}
-							class="text-xs px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 transition"
+							class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 transition font-mono"
 						>
 							{#if copied}
 								<Check class="w-3 h-3 text-emerald-400" />
 								<span>Copied</span>
 							{:else}
 								<Copy class="w-3 h-3" />
-								<span>Copy Diff</span>
+								<span>Copy</span>
 							{/if}
 						</button>
 					{/if}
-					<span class="text-xs font-mono {taskBadgeType === 'running' ? 'text-amber-400 animate-pulse' : taskBadgeType === 'success' ? 'text-emerald-400' : taskBadgeType === 'error' ? 'text-rose-400' : 'text-zinc-500'}">
+					<span class="text-[11px] font-mono {taskBadgeType === 'running' ? 'text-amber-400 animate-pulse' : taskBadgeType === 'success' ? 'text-emerald-400' : taskBadgeType === 'error' ? 'text-rose-400' : 'text-zinc-500'}">
 						{taskBadge}
 					</span>
 				</div>
 			</div>
 
-			<!-- Tab Content Area -->
-			<div class="p-4 flex-1 overflow-auto bg-zinc-950 font-mono text-xs">
+			<!-- Content Area -->
+			<div class="p-3.5 flex-1 overflow-auto bg-zinc-950 font-mono text-xs">
 				{#if activeTab === 'diff'}
-					<pre class="text-emerald-400 whitespace-pre-wrap leading-relaxed selection:bg-emerald-500/20">{diffResult}</pre>
+					<pre class="text-zinc-200 whitespace-pre-wrap leading-relaxed">{diffResult || '(No diff)'}</pre>
 				{:else if activeTab === 'logs'}
-					<pre class="text-zinc-300 whitespace-pre-wrap leading-relaxed selection:bg-indigo-500/20">{logsResult}</pre>
+					<pre class="text-zinc-300 whitespace-pre-wrap leading-relaxed">{logsResult || '(No logs)'}</pre>
 				{:else if activeTab === 'files' && wsDetails}
-					<div class="flex flex-col gap-4 text-zinc-300">
+					<div class="flex flex-col gap-3.5 text-zinc-300">
 						<div>
-							<div class="text-zinc-500 font-semibold mb-1 uppercase tracking-wider text-[11px]">Recent Commits:</div>
-							<div class="space-y-1 p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80">
+							<div class="text-zinc-500 text-[10px] uppercase tracking-wider mb-1 font-semibold">Commits</div>
+							<div class="space-y-1 p-2.5 bg-zinc-900/40 rounded border border-zinc-800/80">
 								{#each wsDetails.recentCommits as commit}
-									<div class="text-zinc-300">{commit}</div>
+									<div class="text-zinc-300 truncate">{commit}</div>
 								{/each}
 							</div>
 						</div>
 						<div>
-							<div class="text-zinc-500 font-semibold mb-1 uppercase tracking-wider text-[11px]">Tracked Files:</div>
-							<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-3 bg-zinc-900/60 rounded-lg border border-zinc-800/80">
+							<div class="text-zinc-500 text-[10px] uppercase tracking-wider mb-1 font-semibold">Files</div>
+							<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5">
 								{#each wsDetails.files as file}
-									<div class="px-2.5 py-1.5 bg-zinc-950 rounded text-zinc-400 border border-zinc-800 text-[11px] truncate flex items-center gap-1.5">
-										<FileCode class="w-3 h-3 text-zinc-500 shrink-0" />
+									<div class="px-2 py-1 bg-zinc-900/40 rounded border border-zinc-800 text-[11px] truncate text-zinc-400 flex items-center gap-1">
+										<FileCode class="w-3 h-3 text-zinc-600 shrink-0" />
 										<span class="truncate">{file}</span>
 									</div>
 								{/each}
@@ -548,59 +510,51 @@
 	</main>
 </div>
 
-<!-- Clone Repository Modal (shadcn Dialog style) -->
+<!-- Clone Modal -->
 {#if showCloneModal}
-	<div class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-		<div class="bg-zinc-900 border border-zinc-800 rounded-xl max-w-md w-full p-6 flex flex-col gap-4 shadow-2xl">
+	<div class="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+		<div class="bg-zinc-900 border border-zinc-800 rounded-lg max-w-sm w-full p-5 flex flex-col gap-3 shadow-xl text-xs">
 			<div class="flex items-center justify-between">
-				<h3 class="font-bold text-sm text-zinc-100 flex items-center gap-2">
-					<FolderGit2 class="w-4 h-4 text-indigo-400" />
-					<span>Clone Remote Repository</span>
-				</h3>
+				<span class="font-semibold text-zinc-200">Clone Repository</span>
 				<button onclick={() => (showCloneModal = false)} class="text-zinc-500 hover:text-zinc-300 text-sm">&times;</button>
 			</div>
 
-			<div class="flex flex-col gap-3">
+			<div class="flex flex-col gap-2.5">
 				<div>
-					<label for="modal-clone-url" class="text-xs text-zinc-400 block mb-1">Git Clone URL (HTTPS or SSH)</label>
+					<label for="clone-repo-url" class="text-zinc-400 block mb-1 text-[11px]">Git URL</label>
 					<input 
-						id="modal-clone-url"
+						id="clone-repo-url"
 						type="text" 
 						bind:value={cloneUrl}
-						placeholder="https://github.com/user/repo.git" 
-						class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+						placeholder="https://github.com/..." 
+						class="w-full px-2.5 py-1.5 bg-zinc-950 border border-zinc-800 rounded text-xs font-mono text-zinc-200 focus:outline-none focus:border-zinc-700"
 					/>
 				</div>
 				<div>
-					<label for="modal-clone-folder" class="text-xs text-zinc-400 block mb-1">Target Folder Name (Optional)</label>
+					<label for="clone-target-folder" class="text-zinc-400 block mb-1 text-[11px]">Folder (optional)</label>
 					<input 
-						id="modal-clone-folder"
+						id="clone-target-folder"
 						type="text" 
 						bind:value={cloneFolder}
-						placeholder="e.g. backend-api" 
-						class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+						placeholder="folder-name" 
+						class="w-full px-2.5 py-1.5 bg-zinc-950 border border-zinc-800 rounded text-xs font-mono text-zinc-200 focus:outline-none focus:border-zinc-700"
 					/>
 				</div>
 			</div>
 
-			<div class="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800/80">
+			<div class="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
 				<button 
 					onclick={() => (showCloneModal = false)} 
-					class="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition"
+					class="px-2.5 py-1 text-zinc-400 hover:text-zinc-200 transition"
 				>
 					Cancel
 				</button>
 				<button 
 					onclick={handleClone}
 					disabled={isCloning}
-					class="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg transition flex items-center gap-1.5 shadow"
+					class="px-3 py-1 bg-zinc-100 hover:bg-white text-zinc-950 font-medium rounded transition"
 				>
-					{#if isCloning}
-						<RefreshCw class="w-3 h-3 animate-spin" />
-						<span>Cloning...</span>
-					{:else}
-						<span>Clone to Server</span>
-					{/if}
+					{isCloning ? 'Cloning...' : 'Clone'}
 				</button>
 			</div>
 		</div>

@@ -18,13 +18,22 @@ export const GET: RequestHandler = async ({ params }) => {
 		const { stdout: branch } = await execAsync('git branch --show-current 2>/dev/null || echo "none"', { cwd: target });
 		const { stdout: status } = await execAsync('git status -s 2>/dev/null || echo ""', { cwd: target });
 		const { stdout: recentLogs } = await execAsync('git log -n 5 --oneline 2>/dev/null || echo "No commits yet"', { cwd: target });
+		
+		const statusLines = status.trim().split('\n').filter(Boolean);
+		const modifiedCount = statusLines.filter(l => l.startsWith(' M') || l.startsWith('M ')).length;
+		const untrackedCount = statusLines.filter(l => l.startsWith('??')).length;
+		
 		const files = fs.readdirSync(target);
 
 		return json({
 			name: params.name,
 			branch: branch.trim(),
-			status: status.trim() || '(Clean)',
-			recentCommits: recentLogs.trim().split('\n'),
+			clean: statusLines.length === 0,
+			statusSummary: statusLines.length === 0 ? 'Clean' : `${statusLines.length} changed`,
+			modifiedCount,
+			untrackedCount,
+			rawStatus: status.trim() || 'Clean',
+			recentCommits: recentLogs.trim().split('\n').filter(Boolean),
 			files
 		});
 	} catch (err: any) {
