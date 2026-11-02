@@ -8,7 +8,7 @@ import { saveTaskToHistory } from '../../../lib/history';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
-const KMITL_API_URL = 'https://aipass.cskmitl.com/v1/chat/completions';
+const KMITL_API_URL = 'https://aipass.cskmitl.com/api/chat';
 const KMITL_TOKEN = 'gpu_910c7fbfed984909803659c2885e0d320746a068';
 const DEEPSEEK_MODEL = 'deepseek-r1:14b';
 
@@ -116,8 +116,14 @@ Do not output git diff markers directly, just output the complete file contents 
 	}
 
 	const data = await res.json();
-	const reply = data.choices[0]?.message?.content || '';
-	const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+	const thinking = data.message?.thinking || '';
+	const reply = data.message?.content || data.choices?.[0]?.message?.content || '';
+	const fullLogs = thinking ? `<think>\n${thinking}\n</think>\n\n${reply}` : reply;
+
+	const promptTokens = data.prompt_eval_count || data.usage?.prompt_tokens || 0;
+	const completionTokens = data.eval_count || data.usage?.completion_tokens || 0;
+	const cachedTokens = data.prompt_eval_cached_count || 0;
+	const totalTokens = promptTokens + completionTokens;
 
 	// Parse file blocks and write to disk
 	let modifiedFiles = 0;
@@ -154,12 +160,12 @@ Do not output git diff markers directly, just output the complete file contents 
 		branch: branchName,
 		status: status.trim() || 'Clean',
 		diff: diff.trim() || (modifiedFiles > 0 ? `(${modifiedFiles} files created/modified - untracked)` : '(No files modified)'),
-		logs: reply.trim(),
+		logs: fullLogs.trim(),
 		tokens: {
-			total_tokens: usage.total_tokens || 0,
-			input_tokens: usage.prompt_tokens || 0,
-			cached_input_tokens: 0,
-			output_tokens: usage.completion_tokens || 0
+			total_tokens: totalTokens,
+			input_tokens: promptTokens,
+			cached_input_tokens: cachedTokens,
+			output_tokens: completionTokens
 		}
 	};
 }
