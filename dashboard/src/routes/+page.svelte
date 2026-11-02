@@ -19,30 +19,58 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// Initialize directly from SSR PageData so server-rendered HTML contains all items
+	const initWorkspaces = data.workspaces || [];
+	const initHistory = data.history || [];
+	const firstTask = initHistory[0] || null;
+
 	// State
 	let status = $state<SystemStatus | null>(null);
-	let workspaces = $state<string[]>([]);
-	let activeWs = $state<string>('Android-Tv');
+	let workspaces = $state<string[]>(initWorkspaces);
+	let activeWs = $state<string>(initWorkspaces[0] || 'Android-Tv');
 	let wsDetails = $state<WorkspaceDetails | null>(null);
 
 	// History state
-	let history = $state<TaskRecord[]>([]);
-	let selectedTaskId = $state<string | null>(null);
+	let history = $state<TaskRecord[]>(initHistory);
+	let selectedTaskId = $state<string | null>(firstTask?.id || null);
 	let isLoadingHistory = $state<boolean>(false);
 
-	let prompt = $state<string>('');
+	let prompt = $state<string>(firstTask?.prompt || '');
 	let branch = $state<string>('');
-	let provider = $state<'codex' | 'deepseek' | 'both'>('codex');
+	let provider = $state<'codex' | 'deepseek' | 'both'>(
+		firstTask?.mode === 'both' ? 'both' : (firstTask?.provider?.includes('DeepSeek') ? 'deepseek' : 'codex')
+	);
 	let isExecuting = $state<boolean>(false);
-	let taskBadge = $state<string>('Ready');
+	let taskBadge = $state<string>(firstTask ? 'Loaded from History' : 'Ready');
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
 
 	// Execution outputs
-	let singleResult = $state<TaskResult | null>(null);
-	let dualCodex = $state<TaskResult | null>(null);
-	let dualDeepSeek = $state<TaskResult | null>(null);
-	let tokenStats = $state<TokenStats | null>(null);
-
+	let singleResult = $state<TaskResult | null>(
+		firstTask && firstTask.mode !== 'both'
+			? {
+					provider: firstTask.provider,
+					branch: firstTask.branch,
+					status: firstTask.status,
+					diff: firstTask.diff,
+					logs: firstTask.logs,
+					tokens: firstTask.tokens
+				}
+			: null
+	);
+	let dualCodex = $state<TaskResult | null>(firstTask?.mode === 'both' ? (firstTask.codex || null) : null);
+	let dualDeepSeek = $state<TaskResult | null>(firstTask?.mode === 'both' ? (firstTask.deepseek || null) : null);
+	let tokenStats = $state<TokenStats | null>(
+		firstTask?.tokens
+			? {
+					totalTokens: firstTask.tokens.total_tokens || 0,
+					inputTokens: firstTask.tokens.input_tokens || 0,
+					cachedTokens: firstTask.tokens.cached_input_tokens || 0,
+					outputTokens: firstTask.tokens.output_tokens || 0,
+					sessionCount: initHistory.length,
+					latest: firstTask.tokens
+				}
+			: null
+	);
 
 	// Modal
 	let showCloneModal = $state<boolean>(false);
@@ -51,54 +79,6 @@
 	// Terminal
 	let isRunningCmd = $state<boolean>(false);
 	let terminalLogs = $state<string>('');
-
-	// Initial population from SSR data
-	let initializedFromData = false;
-	$effect.pre(() => {
-		if (data && !initializedFromData) {
-			initializedFromData = true;
-			if (data.workspaces && data.workspaces.length > 0) {
-				workspaces = data.workspaces;
-				activeWs = data.workspaces[0];
-			}
-			const initHistory = data.history || [];
-			history = initHistory;
-			const firstTask = initHistory[0] || null;
-			if (firstTask) {
-				selectedTaskId = firstTask.id;
-				prompt = firstTask.prompt || '';
-				taskBadge = 'Loaded from History';
-				if (firstTask.mode === 'both') {
-					provider = 'both';
-					dualCodex = firstTask.codex || null;
-					dualDeepSeek = firstTask.deepseek || null;
-					singleResult = null;
-				} else {
-					provider = firstTask.provider === 'deepseek' ? 'deepseek' : 'codex';
-					singleResult = {
-						provider: firstTask.provider,
-						branch: firstTask.branch,
-						status: firstTask.status,
-						diff: firstTask.diff,
-						logs: firstTask.logs,
-						tokens: firstTask.tokens
-					};
-					dualCodex = null;
-					dualDeepSeek = null;
-				}
-				if (firstTask.tokens) {
-					tokenStats = {
-						totalTokens: firstTask.tokens.total_tokens || 0,
-						inputTokens: firstTask.tokens.input_tokens || 0,
-						cachedTokens: firstTask.tokens.cached_input_tokens || 0,
-						outputTokens: firstTask.tokens.output_tokens || 0,
-						sessionCount: initHistory.length,
-						latest: firstTask.tokens
-					};
-				}
-			}
-		}
-	});
 
 
 	async function fetchStatus() {
