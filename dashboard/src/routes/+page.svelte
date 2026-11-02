@@ -314,6 +314,52 @@
 		}
 	}
 
+	async function handleDeleteWorkspace(ws: string) {
+		if (!confirm(`คุณต้องการลบ Workspace '${ws}' ใช่หรือไม่?`)) {
+			return;
+		}
+		try {
+			const res = await fetch(`/api/workspaces/${encodeURIComponent(ws)}`, { 
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' }
+			});
+			const d = await res.json();
+			if (d.success) {
+				if (activeWs === ws) {
+					activeWs = 'auto-temp';
+				}
+				await fetchWorkspaces();
+			} else {
+				alert(d.error || 'ลบ workspace ไม่สำเร็จ');
+			}
+		} catch (e: any) {
+			alert(e.message);
+		}
+	}
+
+	async function handleCleanTempWorkspaces() {
+		if (!confirm('คุณต้องการลบ Temp Workspaces ทั้งหมดใช่หรือไม่?')) {
+			return;
+		}
+		try {
+			const res = await fetch('/api/workspaces?tempOnly=true', { 
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' }
+			});
+			const d = await res.json();
+			if (d.success) {
+				if (activeWs.startsWith('temp-')) {
+					activeWs = 'auto-temp';
+				}
+				await fetchWorkspaces();
+			} else {
+				alert(d.error || 'ลบ temp workspaces ไม่สำเร็จ');
+			}
+		} catch (e: any) {
+			alert(e.message);
+		}
+	}
+
 	onMount(() => {
 		if (data.workspaces && data.workspaces.length > 0) {
 			workspaces = data.workspaces;
@@ -371,6 +417,8 @@
 				{wsDetails} 
 				onSelectWorkspace={selectWorkspace} 
 				onOpenClone={() => (showCloneModal = true)} 
+				onDeleteWorkspace={handleDeleteWorkspace}
+				onCleanTempWorkspaces={handleCleanTempWorkspaces}
 			/>
 
 			<HistorySidebar 

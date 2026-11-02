@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Plus, GitBranch } from 'lucide-svelte';
+	import { Plus, GitBranch, Trash2 } from 'lucide-svelte';
 	import type { WorkspaceDetails } from '../types';
 
 	interface Props {
@@ -8,16 +8,40 @@
 		wsDetails: WorkspaceDetails | null;
 		onSelectWorkspace: (ws: string) => void;
 		onOpenClone: () => void;
+		onDeleteWorkspace?: (ws: string) => void;
+		onCleanTempWorkspaces?: () => void;
 	}
 
-	let { workspaces, activeWs, wsDetails, onSelectWorkspace, onOpenClone }: Props = $props();
+	let { 
+		workspaces, 
+		activeWs, 
+		wsDetails, 
+		onSelectWorkspace, 
+		onOpenClone,
+		onDeleteWorkspace,
+		onCleanTempWorkspaces
+	}: Props = $props();
+
+	let tempCount = $derived(workspaces.filter(w => w.startsWith('temp-')).length);
 </script>
 
 <div class="flex flex-col gap-4">
 	<!-- Workspaces List -->
 	<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3.5 flex flex-col gap-2.5">
 		<div class="flex items-center justify-between text-xs">
-			<span class="font-medium text-zinc-400">Workspaces</span>
+			<div class="flex items-center gap-2">
+				<span class="font-medium text-zinc-400">Workspaces</span>
+				{#if tempCount > 0 && onCleanTempWorkspaces}
+					<button 
+						onclick={onCleanTempWorkspaces}
+						title="ลบ Temp Workspaces ทั้งหมด"
+						class="text-[10px] px-1.5 py-0.5 rounded bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/40 cursor-pointer flex items-center gap-1 transition"
+					>
+						<Trash2 class="w-2.5 h-2.5" />
+						<span>ล้าง Temp ({tempCount})</span>
+					</button>
+				{/if}
+			</div>
 			<button 
 				onclick={onOpenClone}
 				class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition flex items-center gap-1 cursor-pointer"
@@ -45,15 +69,32 @@
 			<div class="my-0.5 border-t border-zinc-800/60"></div>
 
 			{#each workspaces as ws}
-				<button 
-					onclick={() => onSelectWorkspace(ws)}
-					class="w-full text-left px-2.5 py-1.5 rounded text-xs font-mono transition flex items-center justify-between cursor-pointer {ws === activeWs ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}"
-				>
-					<span class="truncate">{ws}</span>
-					{#if ws === activeWs}
-						<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+				<div class="group relative flex items-center">
+					<button 
+						onclick={() => onSelectWorkspace(ws)}
+						class="w-full text-left px-2.5 py-1.5 rounded text-xs font-mono transition flex items-center justify-between cursor-pointer {ws === activeWs ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'} {ws.startsWith('temp-') || ws === 'demo-project' ? 'pr-7' : ''}"
+					>
+						<span class="truncate flex items-center gap-1.5">
+							{#if ws.startsWith('temp-')}
+								<span class="text-[9px] px-1 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-sans">temp</span>
+							{/if}
+							<span class="truncate">{ws}</span>
+						</span>
+						{#if ws === activeWs}
+							<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
+						{/if}
+					</button>
+
+					{#if onDeleteWorkspace && (ws.startsWith('temp-') || ws === 'demo-project')}
+						<button
+							onclick={(e) => { e.stopPropagation(); onDeleteWorkspace(ws); }}
+							title="ลบ Workspace นี้"
+							class="absolute right-1.5 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-950/60 text-zinc-500 hover:text-red-400 transition cursor-pointer"
+						>
+							<Trash2 class="w-3 h-3" />
+						</button>
 					{/if}
-				</button>
+				</div>
 			{:else}
 				<div class="text-[11px] text-zinc-600 italic py-2 text-center font-mono">No workspaces yet. Click Clone to add one.</div>
 			{/each}

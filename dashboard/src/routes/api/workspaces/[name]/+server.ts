@@ -40,3 +40,20 @@ export const GET: RequestHandler = async ({ params }) => {
 		return json({ error: err.message }, { status: 500 });
 	}
 };
+
+export const DELETE: RequestHandler = async ({ params }) => {
+	try {
+		const wsName = path.basename(params.name);
+		if (!wsName || wsName === '.' || wsName === '..') {
+			return json({ error: 'Invalid workspace name' }, { status: 400 });
+		}
+		const target = path.join(WORKSPACES_DIR, wsName);
+		if (!fs.existsSync(target)) {
+			return json({ error: 'Workspace not found' }, { status: 404 });
+		}
+		fs.rmSync(target, { recursive: true, force: true });
+		return json({ success: true, message: `Workspace '${wsName}' deleted` });
+	} catch (err: any) {
+		return json({ error: err.message }, { status: 500 });
+	}
+};

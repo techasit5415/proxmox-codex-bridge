@@ -116,6 +116,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: 'delete_workspace',
+        description: 'ลบ workspace หรือ temp workspace ออกจาก /opt/agent-bridge/workspaces',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'ชื่อโฟลเดอร์ใน workspaces ที่ต้องการลบ' }
+          },
+          required: ['workspace']
+        }
+      },
+      {
         name: 'run_codex_task',
         description: 'สั่งให้ OpenAI Codex CLI (ChatGPT Plus: gpt-6.1-sol) แก้ไขโค้ดใน workspace แบบอัตโนมัติ',
         inputSchema: {
@@ -360,6 +371,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const cmd = `git clone ${args.repoUrl} ${folder}`;
       const { stdout, stderr } = await execAsync(cmd, { cwd: WORKSPACES_DIR });
       return { content: [{ type: 'text', text: `Cloned successfully!\n${stdout}\n${stderr}` }] };
+    }
+
+    if (name === 'delete_workspace') {
+      const wsName = path.basename(args.workspace);
+      const target = path.join(WORKSPACES_DIR, wsName);
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true });
+        return { content: [{ type: 'text', text: `Workspace '${wsName}' deleted successfully.` }] };
+      }
+      return { content: [{ type: 'text', text: `Workspace '${wsName}' not found.` }], isError: true };
     }
 
     if (name === 'run_codex_task') {
