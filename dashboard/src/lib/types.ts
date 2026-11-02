@@ -36,6 +36,23 @@ export interface WorkspaceDetails {
 	files: string[];
 }
 
+export interface TaskResult {
+	provider: string;
+	branch: string;
+	status: string;
+	diff: string;
+	logs: string;
+	tokens?: TokenUsage;
+}
+
+export interface ConsensusData {
+	codexProposal: TaskResult;
+	deepseekProposal: TaskResult;
+	codexReviewOfDeepSeek: string;
+	deepseekReviewOfCodex: string;
+	finalSolution: TaskResult;
+}
+
 export interface TaskRecord {
 	id: string;
 	timestamp: number;
@@ -48,18 +65,10 @@ export interface TaskRecord {
 	diff: string;
 	logs: string;
 	tokens?: TokenUsage;
-	mode?: 'single' | 'both';
+	mode?: 'single' | 'both' | 'consensus';
 	codex?: TaskResult;
 	deepseek?: TaskResult;
-}
-
-export interface TaskResult {
-	provider: string;
-	branch: string;
-	status: string;
-	diff: string;
-	logs: string;
-	tokens?: TokenUsage;
+	consensus?: ConsensusData;
 }
 
 export function fmtTokens(n: number | undefined | null): string {

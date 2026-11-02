@@ -6,6 +6,7 @@
 		WorkspaceDetails, 
 		TaskRecord, 
 		TaskResult, 
+		ConsensusData,
 		TokenStats 
 	} from '../lib/types';
 
@@ -36,7 +37,7 @@
 
 	let prompt = $state<string>('');
 	let branch = $state<string>('');
-	let provider = $state<'codex' | 'deepseek' | 'both'>('codex');
+	let provider = $state<'codex' | 'deepseek' | 'both' | 'consensus'>('codex');
 	let isExecuting = $state<boolean>(false);
 	let taskBadge = $state<string>('Ready');
 	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
@@ -45,6 +46,7 @@
 	let singleResult = $state<TaskResult | null>(null);
 	let dualCodex = $state<TaskResult | null>(null);
 	let dualDeepSeek = $state<TaskResult | null>(null);
+	let consensusResult = $state<ConsensusData | null>(null);
 	let tokenStats = $state<TokenStats | null>(
 		initHistory[0]?.tokens
 			? {
@@ -136,9 +138,16 @@
 			fetchWorkspaceDetails(item.workspace);
 		}
 
-		if (item.mode === 'both' && item.codex && item.deepseek) {
+		if (item.mode === 'consensus' && item.consensus) {
+			consensusResult = item.consensus;
+			dualCodex = null;
+			dualDeepSeek = null;
+			singleResult = null;
+			provider = 'consensus';
+		} else if (item.mode === 'both' && item.codex && item.deepseek) {
 			dualCodex = item.codex;
 			dualDeepSeek = item.deepseek;
+			consensusResult = null;
 			singleResult = null;
 			provider = 'both';
 		} else {
@@ -152,6 +161,7 @@
 			};
 			dualCodex = null;
 			dualDeepSeek = null;
+			consensusResult = null;
 			if (item.provider?.includes('DeepSeek')) {
 				provider = 'deepseek';
 			} else {
@@ -181,6 +191,7 @@
 		singleResult = null;
 		dualCodex = null;
 		dualDeepSeek = null;
+		consensusResult = null;
 		taskBadge = 'Ready';
 		taskBadgeType = 'idle';
 		fetchStatus();
@@ -190,7 +201,9 @@
 		if (!prompt.trim() || isExecuting) return;
 		isExecuting = true;
 		selectedTaskId = null;
-		taskBadge = provider === 'both' ? 'Running Dual Agents...' : 'Executing...';
+		taskBadge = provider === 'consensus'
+			? 'Running Multi-Agent Consensus Loop...'
+			: (provider === 'both' ? 'Running Dual Agents (Worktrees)...' : 'Executing...');
 		taskBadgeType = 'running';
 
 		try {
@@ -210,14 +223,21 @@
 					await fetchWorkspaces();
 				}
 
-				if (d.mode === 'both') {
+				if (d.mode === 'consensus') {
+					consensusResult = d.consensus;
+					dualCodex = null;
+					dualDeepSeek = null;
+					singleResult = null;
+				} else if (d.mode === 'both') {
 					dualCodex = d.codex;
 					dualDeepSeek = d.deepseek;
+					consensusResult = null;
 					singleResult = null;
 				} else {
 					singleResult = d;
 					dualCodex = null;
 					dualDeepSeek = null;
+					consensusResult = null;
 				}
 
 				fetchWorkspaceDetails(activeWs);
@@ -411,6 +431,7 @@
 				{singleResult} 
 				{dualCodex} 
 				{dualDeepSeek} 
+				{consensusResult}
 				{wsDetails} 
 				{terminalLogs} 
 				{taskBadge} 

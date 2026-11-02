@@ -13,7 +13,8 @@
 - [2. 🗂️ ระบบ Auto Temp Workspace และการจัดการพื้นที่](#2-️-ระบบ-auto-temp-workspace-และการจัดการพื้นที่)
 - [3. 🎯 Task Intent Detection (Code vs General / Planning)](#3--task-intent-detection--code-vs--general--planning)
 - [4. 🛡️ กฎเหล็ก Anti-Hallucination & Multi-Agent Strict Policy](#4-️-กฎเหล็ก-anti-hallucination--multi-agent-strict-policy)
-- [5. 📊 Dual Compare View & ประวัติแบบ Real-time](#5--dual-compare-view--ประวัติแบบ-real-time)
+- [5. 🌲 Dual Compare View & Git Worktree Isolation](#5--dual-compare-view--git-worktree-isolation)
+- [6. 🤝 Multi-Agent Consensus Loop (Bilateral Peer Review)](#6--multi-agent-consensus-loop-bilateral-peer-review)
 - [🛠️ การติดตั้งและการเชื่อมต่อ (Setup & Deployment)](#️-การติดตั้งและการเชื่อมต่อ-setup--deployment)
 - [⚡ การใช้งาน Permanent CLI Runner (scripts/ask_models.py)](#-การใช้งาน-permanent-cli-runner-scriptsask_modelspy)
 - [📦 คู่มือการย้ายเครื่อง (Migration Guide)](#-คู่มือการย้ายเครื่อง-migration-guide)
@@ -67,7 +68,9 @@ flowchart TD
 | **Safe Trash & Clean** | ปุ่มลบ Workspace รายตัว และปุ่มล้างโฟลเดอร์ Temp ทั้งหมด | ✅ ใช้งานจริง |
 | **Task Intent Detection** | จำแนก `💻 Code Task` vs `💡 General / Planning` อัตโนมัติ ป้องกัน Timeout | ✅ ใช้งานจริง |
 | **Anti-Hallucination Policy** | กฎเหล็กระดับระบบ ห้ามจำลองคำตอบ ต้องรันโมเดลจริงบนเซิร์ฟเวอร์เสมอ | ✅ ใช้งานจริง |
-| **Dual Compare View** | รัน 2 โมเดลพร้อมกัน แยก Git branch และเปรียบเทียบคำตอบคู่ขนาน | ✅ ใช้งานจริง |
+| **Dual Compare View** | รัน 2 โมเดลพร้อมกัน เปรียบเทียบผลลัพธ์แบบ Side-by-Side | ✅ ใช้งานจริง |
+| **Git Worktree Isolation** | แยกพื้นที่ไฟล์ใน `.worktrees/` ขจัดปัญหา Race condition และ Branch collision 100% | ✅ ใช้งานจริง |
+| **Multi-Agent Consensus Loop** | ระบบทำงานร่วมกัน 3 ขั้นตอน: Proposals -> Cross Peer Review -> Master Harmonization | ✅ ใช้งานจริง |
 | **Clean State on F5** | หน้าเว็บเปิดมาด้วยสถานะพร้อมพิมพ์ ไม่ Auto-select งานเก่ากวนใจ | ✅ ใช้งานจริง |
 
 ---
@@ -151,14 +154,57 @@ export function detectTaskType(prompt: string): 'code' | 'general'
 
 ---
 
-## 5. 📊 Dual Compare View & ประวัติแบบ Real-time
+## 5. 🌲 Dual Compare View & Git Worktree Isolation
 
-* **เปรียบเทียบผลลัพธ์แบบข้างต่อข้าง (Dual Comparison):**  
-  เมื่อรันในโหมด `Both (Compare)` หน้าเว็บจะแบ่งหน้าจอแสดงผลลัพธ์ของ Codex และ DeepSeek R1 พร้อมกัน สามารถสลับดูผลของแต่ละตัว หรือดู Git Diff ที่ทั้งสองฝ่ายแก้ไขแยกตาม Branch
+* **ขจัด Race Condition ด้วย Git Worktree Isolation:**  
+  ในการทำงานแบบขนาน (Dual Mode) ทั้งสองโมเดลจะไม่รันคำสั่งลงบน Root directory เดียวกัน แต่ระบบจะสร้าง Isolated Worktree ใน `.worktrees/codex-<id>` และ `.worktrees/deepseek-<id>` ชั่วคราว:
+  * โมเดลแต่ละตัวทำงานบน Branch ของตัวเองอย่างอิสระ ไม่มีการแย่ง Checkout หรือเขียนทับไฟล์ระหว่างกัน
+  * เมื่อจบงาน ระบบจะบันทึก Commit ลง Git branch ของโมเดลนั้นๆ แล้ว Prune Worktree ออก คืนความสะอาดให้ Repository 100%
+* **เปรียบเทียบผลลัพธ์แบบข้างต่อข้าง (Side-by-Side Dual Comparison):**  
+  หน้าเว็บมี Toolbar สลับมุมมองได้ทั้ง `Split (Side-by-Side)`, `Codex Only`, หรือ `DeepSeek Only` พร้อมแสดง Git Diff และ Token สรุปของแต่ละตัว
 * **การตรวจสอบความคิด (Chain-of-Thought):**  
   แท็บ Response & Reasoning มีการ์ดพับ/ขยายเพื่ออ่านกระบวนการคิดและวางแผน (`<think>...</think>`) ของโมเดล DeepSeek R1
 * **Token Tracking:**  
   ติดตามจำนวน Token ที่ใช้ ทั้ง Input, Cached Tokens, และ Completion Tokens อย่างแม่นยำ
+
+---
+
+## 6. 🤝 Multi-Agent Consensus Loop (Bilateral Peer Review)
+
+เพื่อยกระดับระบบจากการเป็นเพียง "ตัวเปรียบเทียบ" สู่ **"ทีม AI ทำงานร่วมกันจริง (Autonomous Multi-Agent Collaboration)"** ระบบได้เพิ่มโหมด **`Consensus (Loop)`**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 👨‍💻 ผู้ใช้งาน
+    participant Orchestrator as ⚡ Bridge Orchestrator
+    participant Codex as 🤖 OpenAI Codex (gpt-6.1-sol)
+    participant DeepSeek as 🧠 DeepSeek R1 (14b GPU)
+
+    User->>Orchestrator: สั่งงานในโหมด Consensus
+    Note over Orchestrator: Stage 1: Parallel Generation
+    par Worktree 1 (.worktrees/codex)
+        Orchestrator->>Codex: สร้าง Initial Solution A + Code Diff
+    and Worktree 2 (.worktrees/deepseek)
+        Orchestrator->>DeepSeek: สร้าง Initial Solution B + Code Diff
+    end
+
+    Note over Orchestrator: Stage 2: Bilateral Peer Review
+    par DeepSeek Audits Codex
+        Orchestrator->>DeepSeek: ส่ง Proposal A ให้ DeepSeek วิจารณ์จุดอ่อน & ช่องโหว่
+    and Codex Audits DeepSeek
+        Orchestrator->>Codex: ส่ง Proposal B ให้ Codex วิจารณ์สถาปัตยกรรม & Edge Cases
+    end
+
+    Note over Orchestrator: Stage 3: Consensus Harmonization
+    Orchestrator->>Codex: รวบรวม Proposals ทั้ง 2 และ Peer Reviews ทั้งคู่<br/>สังเคราะห์เป็น Master Consensus Solution ลงใน workspace
+    Orchestrator-->>User: บันทึกรายงาน Consensus สมบูรณ์ + Git Diff + ประวัติงาน
+```
+
+### 3 ขั้นตอนของ Consensus Loop:
+1. **Stage 1 (Independent Proposals):** Codex และ DeepSeek ทำงานคู่ขนานใน Isolated Worktrees เพื่อสร้างข้อเสนอและโค้ดเบื้องต้นโดยไม่มีการชี้นำซึ่งกันและกัน
+2. **Stage 2 (Bilateral Cross-Review):** นำผลลัพธ์และโค้ดของฝ่ายหนึ่งส่งให้อีกฝ่ายทำหน้าที่เป็น Senior Architect/Auditor เพื่อวิเคราะห์จุดเด่น ข้อบกพร่อง ช่องโหว่ความปลอดภัย และ Edge Cases
+3. **Stage 3 (Master Harmonization & Implementation):** Consensus Orchestrator นำข้อเสนอและคำวิจารณ์จากทั้ง 2 ฝ่ายมากลั่นกรองเป็น **"ชิ้นงานที่สมบูรณ์ที่สุด (Best-of-both-worlds)"** พร้อมเขียนโค้ดเวอร์ชันจริงลงใน Branch `agent/consensus-<id>`
 
 ---
 
@@ -202,7 +248,10 @@ npm run build
 
 ### 1. คำสั่งการใช้งานพื้นฐาน:
 ```bash
-# รันทั้ง 2 โมเดลพร้อมกัน (Codex gpt-6.1-sol + DeepSeek R1 14b) แบบ Dual Mode
+# รัน Multi-Agent Consensus Loop (Proposals -> Peer Review -> Master Harmonization)
+python scripts/ask_models.py --consensus "ออกแบบสถาปัตยกรรมระบบ Real-time Notification ให้ทนทานและปลอดภัย"
+
+# รันทั้ง 2 โมเดลพร้อมกัน (Codex gpt-6.1-sol + DeepSeek R1 14b) แบบ Dual Mode (Git Worktrees Isolated)
 python scripts/ask_models.py --both "วางแผนสถาปัตยกรรมระบบสำหรับ Real-time Chat"
 
 # รันเฉพาะ OpenAI Codex (ChatGPT Plus: gpt-6.1-sol)

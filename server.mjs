@@ -154,12 +154,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'run_dual_task',
-        description: 'สั่งทั้ง Codex (gpt-6.1-sol) และ DeepSeek R1 (14b GPU) ทำงานพร้อมกันบนคนละ branch เพื่อเปรียบเทียบ diff',
+        description: 'สั่งทั้ง Codex (gpt-6.1-sol) และ DeepSeek R1 (14b GPU) ทำงานพร้อมกันบนคนละ branch (แยก Git Worktrees อิสระ)',
         inputSchema: {
           type: 'object',
           properties: {
             workspace: { type: 'string', description: 'ชื่อโฟลเดอร์โปรเจกต์' },
             prompt: { type: 'string', description: 'คำสั่งงาน' }
+          },
+          required: ['workspace', 'prompt']
+        }
+      },
+      {
+        name: 'run_consensus_task',
+        description: 'รัน Multi-Agent Consensus Loop (Codex + DeepSeek ทำ Peer Review ข้ามกันและกลั่นกรองสรุปเป็น Master Solution)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'ชื่อโฟลเดอร์โปรเจกต์ หรือ temp' },
+            prompt: { type: 'string', description: 'คำสั่งงานที่ต้องการให้ทั้ง 2 Agent ร่วมกันวิเคราะห์และสร้างโค้ด' }
           },
           required: ['workspace', 'prompt']
         }
@@ -180,13 +192,76 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-async function executeDeepSeek(target, prompt, branchName) {
+async function prepareWorktree(repoDir, branchName, prefix) {
   try {
-    await execAsync(`git checkout -b ${branchName}`, { cwd: target });
+    await execAsync('git rev-parse HEAD', { cwd: repoDir });
+  } catch (e) {
+    await execAsync('git init && git add -A && git commit -m "init workspace" --allow-empty', { cwd: repoDir });
+  }
+
+  const { stdout: headOut } = await execAsync('git rev-parse HEAD', { cwd: repoDir });
+  const baseCommit = headOut.trim();
+
+  const excludeFile = path.join(repoDir, '.git', 'info', 'exclude');
+  try {
+    let excl = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, 'utf8') : '';
+    if (!excl.includes('.worktrees')) {
+      fs.appendFileSync(excludeFile, '\n.worktrees\n.worktrees/**\n');
+    }
   } catch (e) {}
 
+  const worktreesBase = path.join(repoDir, '.worktrees');
+  if (!fs.existsSync(worktreesBase)) {
+    fs.mkdirSync(worktreesBase, { recursive: true });
+  }
+
+  const ts = Date.now();
+  const rand = Math.random().toString(36).substring(2, 6);
+  const worktreePath = path.join(worktreesBase, `${prefix}-${ts}-${rand}`);
+
+  await execAsync(`git worktree add -B "${branchName}" "${worktreePath}" ${baseCommit}`, { cwd: repoDir });
+
+  return { worktreePath, branchName, baseCommit };
+}
+
+async function cleanupWorktree(repoDir, ctx, commitMsg) {
+  try {
+    if (commitMsg && fs.existsSync(ctx.worktreePath)) {
+      try {
+        await execAsync(`git add -A && git commit -m "${commitMsg.replace(/"/g, '\\"')}" --allow-empty`, { cwd: ctx.worktreePath });
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  try {
+    await execAsync(`git worktree remove --force "${ctx.worktreePath}"`, { cwd: repoDir });
+  } catch (e) {
+    try {
+      if (fs.existsSync(ctx.worktreePath)) {
+        fs.rmSync(ctx.worktreePath, { recursive: true, force: true });
+      }
+    } catch (err) {}
+  }
+
+  try {
+    await execAsync('git worktree prune', { cwd: repoDir });
+  } catch (e) {}
+}
+
+async function executeDeepSeek(target, prompt, branchName, cwdOverride) {
+  const runDir = cwdOverride || target;
+  if (!cwdOverride) {
+    try {
+      await execAsync(`git checkout -b ${branchName}`, { cwd: target });
+    } catch (e) {}
+  }
+
   const taskType = detectTaskType(prompt);
-  const { stdout: fileList } = await execAsync('git ls-files | head -n 40', { cwd: target });
+  let fileList = '';
+  try {
+    const { stdout } = await execAsync('git ls-files | head -n 40', { cwd: runDir });
+    fileList = stdout;
+  } catch (e) {}
 
   const systemPrompt = taskType === 'general'
     ? `You are an expert AI advisor and assistant. The user is asking a general planning, advisory, or analytical question.
@@ -266,15 +341,15 @@ file:path/to/file.ext
     let filePath = match[1]?.trim();
     const fileContent = match[2];
     if (filePath) {
-      const absPath = path.join(target, filePath);
+      const absPath = path.join(runDir, filePath);
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
       fs.writeFileSync(absPath, fileContent, 'utf8');
       modifiedFiles++;
     }
   }
 
-  const { stdout: diff } = await execAsync('git diff', { cwd: target });
-  const { stdout: status } = await execAsync('git status -s', { cwd: target });
+  const { stdout: diff } = await execAsync('git diff', { cwd: runDir });
+  const { stdout: status } = await execAsync('git status -s', { cwd: runDir });
 
   return {
     branch: branchName,
@@ -290,10 +365,13 @@ file:path/to/file.ext
   };
 }
 
-async function executeCodex(target, prompt, branchName) {
-  try {
-    await execAsync(`git checkout -b ${branchName}`, { cwd: target });
-  } catch (e) {}
+async function executeCodex(target, prompt, branchName, cwdOverride) {
+  const runDir = cwdOverride || target;
+  if (!cwdOverride) {
+    try {
+      await execAsync(`git checkout -b ${branchName}`, { cwd: target });
+    } catch (e) {}
+  }
 
   const taskType = detectTaskType(prompt);
   const effectivePrompt = taskType === 'general'
@@ -309,7 +387,7 @@ ${prompt}`
   const promptFile = `/tmp/codex_mcp_prompt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.txt`;
   fs.writeFileSync(promptFile, effectivePrompt, 'utf8');
 
-  const codexCmd = `cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" -`;
+  const codexCmd = `cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${runDir}" -`;
 
   let stdout = '';
   let stderr = '';
@@ -324,8 +402,8 @@ ${prompt}`
   } finally {
     try { fs.unlinkSync(promptFile); } catch (e) {}
   }
-  const { stdout: diff } = await execAsync('git diff', { cwd: target });
-  const { stdout: status } = await execAsync('git status -s', { cwd: target });
+  const { stdout: diff } = await execAsync('git diff', { cwd: runDir });
+  const { stdout: status } = await execAsync('git status -s', { cwd: runDir });
   const tokens = getLatestTokenUsage() || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
 
   return {
@@ -487,16 +565,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'run_dual_task') {
       const { finalName, target } = await resolveWorkspace(args.workspace, args.prompt);
       const ts = Date.now();
-      // Start DeepSeek network query concurrently with Codex CLI (with error boundary)
-      const deepseekPromise = executeDeepSeek(target, args.prompt, `agent/deepseek-${ts}`).catch(err => ({
-        branch: `agent/deepseek-${ts}`,
-        diff: '',
-        status: 'Failed',
-        logs: `DeepSeek Error: ${err.message}`,
-        tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
-      }));
-      const codexRes = await executeCodex(target, args.prompt, `agent/codex-${ts}`);
-      const deepseekRes = await deepseekPromise;
+      const codexBranch = `agent/codex-${ts}`;
+      const deepseekBranch = `agent/deepseek-${ts}`;
+
+      const codexWorktree = await prepareWorktree(target, codexBranch, 'codex');
+      const deepseekWorktree = await prepareWorktree(target, deepseekBranch, 'deepseek');
+
+      let codexRes;
+      let deepseekRes;
+
+      try {
+        const deepseekPromise = executeDeepSeek(target, args.prompt, deepseekBranch, deepseekWorktree.worktreePath).catch(err => ({
+          branch: deepseekBranch,
+          diff: '',
+          status: 'Failed',
+          logs: `DeepSeek Error: ${err.message}`,
+          tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+        }));
+
+        codexRes = await executeCodex(target, args.prompt, codexBranch, codexWorktree.worktreePath);
+        deepseekRes = await deepseekPromise;
+      } finally {
+        await cleanupWorktree(target, codexWorktree, `Codex: ${args.prompt.slice(0, 50)}`);
+        await cleanupWorktree(target, deepseekWorktree, `DeepSeek: ${args.prompt.slice(0, 50)}`);
+      }
 
       recordTaskHistory({
         workspace: finalName,
@@ -520,7 +612,180 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return {
         content: [{
           type: 'text',
-          text: `[Dual Task Comparison]\nWorkspace: ${finalName}\n\n=== 1. CODEX (gpt-6.1-sol) Branch: ${codexRes.branch} ===\n${codexRes.diff}\n\n=== 2. DEEPSEEK R1 (14b GPU) Branch: ${deepseekRes.branch} ===\n${deepseekRes.diff}`
+          text: `[Dual Task Comparison (Git Worktrees Isolated)]\nWorkspace: ${finalName}\n\n=== 1. CODEX (gpt-6.1-sol) Branch: ${codexRes.branch} ===\n${codexRes.diff}\n\n=== 2. DEEPSEEK R1 (14b GPU) Branch: ${deepseekRes.branch} ===\n${deepseekRes.diff}`
+        }]
+      };
+    }
+
+    if (name === 'run_consensus_task') {
+      const { finalName, target } = await resolveWorkspace(args.workspace, args.prompt);
+      const ts = Date.now();
+      const codexPropBranch = `agent/codex-prop-${ts}`;
+      const deepseekPropBranch = `agent/deepseek-prop-${ts}`;
+      const consensusBranch = `agent/consensus-${ts}`;
+
+      // Stage 1: Parallel Generation in isolated worktrees
+      const codexWorktree = await prepareWorktree(target, codexPropBranch, 'codex-prop');
+      const deepseekWorktree = await prepareWorktree(target, deepseekPropBranch, 'deepseek-prop');
+
+      let codexProp;
+      let deepseekProp;
+
+      try {
+        const deepseekPromise = executeDeepSeek(target, args.prompt, deepseekPropBranch, deepseekWorktree.worktreePath).catch(err => ({
+          branch: deepseekPropBranch,
+          diff: '',
+          status: 'Failed',
+          logs: `DeepSeek Error: ${err.message}`,
+          tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+        }));
+
+        codexProp = await executeCodex(target, args.prompt, codexPropBranch, codexWorktree.worktreePath);
+        deepseekProp = await deepseekPromise;
+      } finally {
+        await cleanupWorktree(target, codexWorktree, `Codex Proposal: ${args.prompt.slice(0, 50)}`);
+        await cleanupWorktree(target, deepseekWorktree, `DeepSeek Proposal: ${args.prompt.slice(0, 50)}`);
+      }
+
+      // Stage 2: Bilateral Cross-Review
+      const dsRevPrompt = `[PEER REVIEW REQUEST]
+You are a Principal Software Architect & Auditor conducting a peer review of a solution proposed by OpenAI Codex for the following task.
+
+=== ORIGINAL TASK ===
+${args.prompt}
+
+=== CODEX'S PROPOSAL & OUTPUT ===
+${codexProp.logs.slice(0, 10000)}
+
+=== CODEX'S GIT DIFF ===
+${codexProp.diff || '(No diff recorded)'}
+
+Please provide your rigorous peer review in Thai (and English for technical terms):
+1. จุดเด่นของแนวทางนี้ (Key Strengths)
+2. จุดบกพร่อง ช่องโหว่ หรือ Edge Cases ที่อาจเกิดขึ้น (Flaws, Vulnerabilities & Edge Cases)
+3. ข้อเสนอแนะในการปรับปรุงให้สมบูรณ์ยิ่งขึ้น (Actionable Improvements)`;
+
+      const codexRevPrompt = `[TASK TYPE: GENERAL CONSULTATION / PEER REVIEW AUDIT]
+You are a Principal Software Architect & Auditor conducting a peer review of a solution proposed by DeepSeek R1 for the following task.
+
+=== ORIGINAL TASK ===
+${args.prompt}
+
+=== DEEPSEEK R1 PROPOSAL & OUTPUT ===
+${deepseekProp.logs.slice(0, 10000)}
+
+=== DEEPSEEK R1 GIT DIFF ===
+${deepseekProp.diff || '(No diff recorded)'}
+
+Please provide your rigorous peer review in Thai (and English for technical terms):
+1. จุดเด่นของแนวทางนี้ (Key Strengths)
+2. จุดบกพร่อง ช่องโหว่ หรือ Edge Cases ที่อาจเกิดขึ้น (Flaws, Vulnerabilities & Edge Cases)
+3. ข้อเสนอแนะในการปรับปรุงให้สมบูรณ์ยิ่งขึ้น (Actionable Improvements)`;
+
+      const deepseekReviewPromise = (async () => {
+        const res = await fetch(KMITL_API_URL, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${KMITL_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: DEEPSEEK_MODEL,
+            messages: [
+              { role: 'system', content: 'You are a Senior Software Architect and Code Auditor providing high-standard peer reviews in Thai.' },
+              { role: 'user', content: dsRevPrompt }
+            ]
+          })
+        });
+        if (!res.ok) return `DeepSeek Review failed: ${res.statusText}`;
+        const data = await res.json();
+        const msg = data.message?.content || data.choices?.[0]?.message?.content || '';
+        const think = data.message?.thinking ? `<think>\n${data.message.thinking}\n</think>\n\n` : '';
+        return (think + msg).trim();
+      })().catch(err => `DeepSeek Review Error: ${err.message}`);
+
+      const codexReviewPromise = (async () => {
+        const promptFile = `/tmp/codex_rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.txt`;
+        fs.writeFileSync(promptFile, codexRevPrompt, 'utf8');
+        try {
+          const res = await execAsync(`cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" -`, {
+            timeout: 5 * 60 * 1000,
+            maxBuffer: 10 * 1024 * 1024,
+            env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' }
+          });
+          return (res.stdout + '\n' + res.stderr).trim();
+        } finally {
+          try { fs.unlinkSync(promptFile); } catch (e) {}
+        }
+      })().catch(err => `Codex Review Error: ${err.message}`);
+
+      const [deepseekReviewOfCodex, codexReviewOfDeepSeek] = await Promise.all([
+        deepseekReviewPromise,
+        codexReviewPromise
+      ]);
+
+      // Stage 3: Consensus Harmonization
+      const consensusPrompt = `[TASK TYPE: CONSENSUS HARMONIZATION & FINAL IMPLEMENTATION]
+You are the Lead Consensus Multi-Agent Orchestrator.
+We have executed a multi-agent debate and peer review between OpenAI Codex and DeepSeek R1.
+
+=== ORIGINAL TASK ===
+${args.prompt}
+
+=== PROPOSAL A (Codex) ===
+${codexProp.logs.slice(0, 5000)}
+Diff: ${codexProp.diff || 'none'}
+
+=== PEER REVIEW OF PROPOSAL A (by DeepSeek R1) ===
+${deepseekReviewOfCodex.slice(0, 3500)}
+
+=== PROPOSAL B (DeepSeek R1) ===
+${deepseekProp.logs.slice(0, 5000)}
+Diff: ${deepseekProp.diff || 'none'}
+
+=== PEER REVIEW OF PROPOSAL B (by Codex) ===
+${codexReviewOfDeepSeek.slice(0, 3500)}
+
+=== YOUR MANDATE ===
+1. Synthesize the final agreed solution (Consensus Solution), taking the best parts of both proposals and solving all issues raised in the peer reviews.
+2. If this is a Code Task, apply the final, production-ready code directly into the workspace files.
+3. Conclude with a clear Consensus Summary explaining what was harmonized and why this consensus is superior to each individual proposal alone.`;
+
+      try {
+        await execAsync(`git checkout -b ${consensusBranch}`, { cwd: target });
+      } catch (e) {}
+
+      const finalSolution = await executeCodex(target, consensusPrompt, consensusBranch);
+
+      const totalTokens = (codexProp.tokens?.total_tokens || 0) +
+        (deepseekProp.tokens?.total_tokens || 0) +
+        (finalSolution.tokens?.total_tokens || 0);
+
+      recordTaskHistory({
+        workspace: finalName,
+        prompt: args.prompt,
+        provider: 'Multi-Agent Consensus (Codex + DeepSeek)',
+        branch: consensusBranch,
+        status: 'Consensus Achieved',
+        diff: finalSolution.diff,
+        logs: `=== CONSENSUS FINAL HARMONIZATION ===\n${finalSolution.logs}\n\n=== PEER REVIEW: DEEPSEEK ON CODEX ===\n${deepseekReviewOfCodex}\n\n=== PEER REVIEW: CODEX ON DEEPSEEK ===\n${codexReviewOfDeepSeek}\n\n=== INITIAL CODEX PROPOSAL ===\n${codexProp.logs}\n\n=== INITIAL DEEPSEEK PROPOSAL ===\n${deepseekProp.logs}`,
+        tokens: {
+          total_tokens: totalTokens,
+          input_tokens: (codexProp.tokens?.input_tokens || 0) + (deepseekProp.tokens?.input_tokens || 0) + (finalSolution.tokens?.input_tokens || 0),
+          cached_input_tokens: (codexProp.tokens?.cached_input_tokens || 0) + (finalSolution.tokens?.cached_input_tokens || 0),
+          output_tokens: (codexProp.tokens?.output_tokens || 0) + (deepseekProp.tokens?.output_tokens || 0) + (finalSolution.tokens?.output_tokens || 0)
+        },
+        mode: 'consensus',
+        consensus: {
+          codexProposal: codexProp,
+          deepseekProposal: deepseekProp,
+          codexReviewOfDeepSeek,
+          deepseekReviewOfCodex,
+          finalSolution
+        }
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: `[Multi-Agent Consensus Loop Completed]\nWorkspace: ${finalName}\nBranch: ${consensusBranch}\n\n=== FINAL CONSENSUS SOLUTION ===\n${finalSolution.logs}\n\n=== CONSENSUS DIFF ===\n${finalSolution.diff}`
         }]
       };
     }

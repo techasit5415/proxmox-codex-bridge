@@ -18,9 +18,10 @@ export interface TaskRecord {
 		cached_input_tokens: number;
 		output_tokens: number;
 	};
-	mode?: 'single' | 'both';
+	mode?: 'single' | 'both' | 'consensus';
 	codex?: any;
 	deepseek?: any;
+	consensus?: any;
 }
 
 const HISTORY_FILE = '/opt/agent-bridge/tasks_history.json';
@@ -81,7 +82,8 @@ export function saveTaskToHistory(task: Omit<TaskRecord, 'id' | 'timestamp' | 'd
 		tokens: task.tokens || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
 		mode: task.mode || 'single',
 		codex: task.codex,
-		deepseek: task.deepseek
+		deepseek: task.deepseek,
+		consensus: task.consensus
 	};
 
 	// Prepend new record

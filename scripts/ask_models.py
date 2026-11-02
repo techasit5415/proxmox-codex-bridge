@@ -29,7 +29,7 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp"):
     )
     
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.urlopen(req, timeout=450) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data
     except urllib.error.URLError as e:
@@ -42,7 +42,8 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp"):
 def main():
     parser = argparse.ArgumentParser(description="Proxmox Codex Bridge Multi-Agent Runner")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--both", action="store_true", help="Query both Codex and DeepSeek R1 concurrently")
+    group.add_argument("--consensus", action="store_true", help="Run Multi-Agent Consensus Loop (Proposals -> Peer Review -> Harmonization)")
+    group.add_argument("--both", action="store_true", help="Query both Codex and DeepSeek R1 concurrently (Isolated Git Worktrees)")
     group.add_argument("--codex", action="store_true", help="Query Codex (ChatGPT Plus: gpt-6.1-sol) only")
     group.add_argument("--deepseek", action="store_true", help="Query DeepSeek R1 (14b GPU) only")
     
@@ -52,7 +53,9 @@ def main():
     args = parser.parse_args()
     
     provider = "both"
-    if args.codex:
+    if args.consensus:
+        provider = "consensus"
+    elif args.codex:
         provider = "codex"
     elif args.deepseek:
         provider = "deepseek"
@@ -62,7 +65,43 @@ def main():
     print(f"\n[Proxmox Bridge Task Completed | Mode: {res.get('mode', provider)} | Workspace: {res.get('workspace')}]")
     print(f"Recorded in Dashboard: http://192.168.5.159:3000\n")
     
-    if provider == "both":
+    if provider == "consensus":
+        consensus_data = res.get("consensus", {})
+        final_sol = consensus_data.get("finalSolution", {})
+        codex_prop = consensus_data.get("codexProposal", {})
+        deepseek_prop = consensus_data.get("deepseekProposal", {})
+        ds_review = consensus_data.get("deepseekReviewOfCodex", "")
+        codex_review = consensus_data.get("codexReviewOfDeepSeek", "")
+        
+        print("=" * 60)
+        print("🏆 [Consensus Harmonized Solution]")
+        print("=" * 60)
+        print(final_sol.get("logs", res.get("logs", "(No output)")))
+        if final_sol.get("diff"):
+            print("\n--- [Consensus Final Git Diff] ---")
+            print(final_sol.get("diff"))
+            
+        print("\n" + "=" * 60)
+        print("🔄 [Peer Review 1: DeepSeek R1 auditing Codex Proposal]")
+        print("=" * 60)
+        print(ds_review or "(No review)")
+        
+        print("\n" + "=" * 60)
+        print("🔄 [Peer Review 2: Codex auditing DeepSeek R1 Proposal]")
+        print("=" * 60)
+        print(codex_review or "(No review)")
+        
+        print("\n" + "=" * 60)
+        print("🤖 [Initial Proposal A: OpenAI Codex]")
+        print("=" * 60)
+        print(codex_prop.get("logs", "(No output)"))
+        
+        print("\n" + "=" * 60)
+        print("🧠 [Initial Proposal B: DeepSeek R1]")
+        print("=" * 60)
+        print(deepseek_prop.get("logs", "(No output)"))
+        
+    elif provider == "both":
         codex_data = res.get("codex", {})
         deepseek_data = res.get("deepseek", {})
         

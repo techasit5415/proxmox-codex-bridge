@@ -5,7 +5,7 @@
 	interface Props {
 		prompt: string;
 		branch: string;
-		provider: 'codex' | 'deepseek' | 'both';
+		provider: 'codex' | 'deepseek' | 'both' | 'consensus';
 		selectedTaskId: string | null;
 		isExecuting: boolean;
 		onExecute: () => void;
@@ -83,6 +83,13 @@
 			>
 				<Layers class="w-3 h-3" />
 				<span>Both (Compare)</span>
+			</button>
+			<button 
+				onclick={() => (provider = 'consensus')}
+				class="px-2.5 py-1 rounded transition flex items-center gap-1 cursor-pointer {provider === 'consensus' ? 'bg-gradient-to-r from-amber-500 to-indigo-600 text-white font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+			>
+				<Sparkles class="w-3 h-3" />
+				<span>Consensus (Loop)</span>
 			</button>
 		</div>
 	</div>

@@ -1,13 +1,15 @@
 <script lang="ts">
-	import { Brain, Search, Copy, Check, FileCode } from 'lucide-svelte';
-	import type { TaskResult, WorkspaceDetails } from '../types';
+	import { Brain, Search, Copy, Check, FileCode, Sparkles } from 'lucide-svelte';
+	import type { TaskResult, WorkspaceDetails, ConsensusData } from '../types';
 	import DualCompareView from './DualCompareView.svelte';
 	import SingleResultView from './SingleResultView.svelte';
+	import ConsensusView from './ConsensusView.svelte';
 
 	interface Props {
 		singleResult: TaskResult | null;
 		dualCodex: TaskResult | null;
 		dualDeepSeek: TaskResult | null;
+		consensusResult?: ConsensusData | null;
 		wsDetails: WorkspaceDetails | null;
 		terminalLogs: string;
 		taskBadge: string;
@@ -18,6 +20,7 @@
 		singleResult,
 		dualCodex,
 		dualDeepSeek,
+		consensusResult = null,
 		wsDetails,
 		terminalLogs,
 		taskBadge,
@@ -31,6 +34,9 @@
 	let copied = $state<boolean>(false);
 
 	function getCurrentDiff(): string {
+		if (consensusResult) {
+			return consensusResult.finalSolution?.diff || '';
+		}
 		if (dualCodex && dualDeepSeek) {
 			return activeTab === 'deepseek_diff' ? dualDeepSeek.diff : dualCodex.diff;
 		}
@@ -194,7 +200,9 @@
 	<div class="p-3.5 flex-1 overflow-auto bg-zinc-950 font-mono text-xs">
 		<!-- RESPONSE & REASONING TAB -->
 		{#if activeTab === 'thoughts'}
-			{#if dualCodex && dualDeepSeek}
+			{#if consensusResult}
+				<ConsensusView consensus={consensusResult} />
+			{:else if dualCodex && dualDeepSeek}
 				<DualCompareView 
 					codex={dualCodex} 
 					deepseek={dualDeepSeek} 
@@ -212,7 +220,7 @@
 
 		<!-- DIFF TAB -->
 		{:else if activeTab === 'diff'}
-			<pre class="text-zinc-200 whitespace-pre-wrap leading-relaxed">{dualCodex ? dualCodex.diff : (singleResult?.diff || '(No diff recorded)')}</pre>
+			<pre class="text-zinc-200 whitespace-pre-wrap leading-relaxed">{consensusResult ? (consensusResult.finalSolution?.diff || '(No diff recorded)') : (dualCodex ? dualCodex.diff : (singleResult?.diff || '(No diff recorded)'))}</pre>
 
 		<!-- DEEPSEEK DIFF TAB -->
 		{:else if activeTab === 'deepseek_diff'}
