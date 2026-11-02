@@ -179,6 +179,37 @@ npm run build
 
 ---
 
+## ⚡ การใช้งาน Permanent CLI Runner (`scripts/ask_models.py`)
+
+เพื่อแก้ไขปัญหาที่ AI Agent ในห้องแชทใหม่ชอบสร้างสคริปต์ชั่วคราว (เช่น `find_dual.py`) เพื่อแงะดูประวัติการรัน (`transcript.jsonl`) ระบบจึงได้จัดเตรียมสคริปต์สั่งการถาวร [`scripts/ask_models.py`](scripts/ask_models.py) ที่เชื่อมตรงเข้ากับ Proxmox Bridge REST API (`/api/task`):
+
+### 1. คำสั่งการใช้งานพื้นฐาน:
+```bash
+# รันทั้ง 2 โมเดลพร้อมกัน (Codex gpt-6.1-sol + DeepSeek R1 14b) แบบ Dual Mode
+python scripts/ask_models.py --both "วางแผนสถาปัตยกรรมระบบสำหรับ Real-time Chat"
+
+# รันเฉพาะ OpenAI Codex (ChatGPT Plus: gpt-6.1-sol)
+python scripts/ask_models.py --codex "เขียนโค้ดฟังก์ชันคำนวณ Fibonacci ใน TypeScript"
+
+# รันเฉพาะ DeepSeek R1 (14b GPU KMITL)
+python scripts/ask_models.py --deepseek "วิเคราะห์ข้อดีข้อเสียของ Event-Driven vs Monolith"
+
+# กำหนด Workspace ปลายทาง (หากไม่ระบุจะสร้าง Auto Temp ให้โดยอัตโนมัติ)
+python scripts/ask_models.py --both --workspace "my-project" "สร้าง Unit Test สำหรับ auth service"
+```
+
+### 2. การติดตั้งเป็น Global Tool สำหรับ Antigravity Agent:
+คัดลอกสคริปต์ไปยังโฟลเดอร์ Global Config เพื่อให้ Agent ในทุกห้องแชทสามารถเรียกใช้งานได้ทันที:
+```bash
+# คัดลอกไปยังโฟลเดอร์ Global Config
+cp scripts/ask_models.py ~/.gemini/config/ask_models.py
+```
+
+### 3. การป้องกัน Agent สร้าง Scratch Script:
+ในไฟล์ `~/.gemini/config/rules/proxmox-codex-bridge.md` และ `~/.gemini/config/AGENTS.md` ได้ระบุข้อกำหนดชัดเจน:
+* ❌ **ห้ามสร้างไฟล์ชั่วคราว:** ห้ามสร้าง `find_dual.py`, `check_server.py` หรือเขียนสคริปต์แงะประวัติแชทเก่า
+* ✅ **รันตรงคำสั่งเดียว:** บังคับให้เรียกผ่าน `python ~/.gemini/config/ask_models.py` โดยตรงผ่านเครื่องมือ `run_command` เสมอ
+
 ## 📦 คู่มือการย้ายเครื่อง (Migration Guide)
 
 หากต้องการย้ายระบบไปยังเครื่องใหม่ สามารถทำตามขั้นตอนด้านล่างตามกรณีการใช้งาน:
