@@ -17,7 +17,10 @@
 		defaultExpanded = false
 	}: Props = $props();
 
-	let expanded = $state<boolean>(defaultExpanded);
+	let expanded = $state<boolean>(false);
+	$effect.pre(() => {
+		expanded = defaultExpanded;
+	});
 	let copied = $state<boolean>(false);
 
 	function copyDiff() {
@@ -49,15 +52,19 @@
 {#if diff && diff !== '(No tracked files modified)' && diff !== '(No files modified)'}
 	<div class="rounded-lg border {colorClasses[providerColor].border} bg-zinc-950 p-2.5 font-mono text-xs">
 		{#if collapsible}
-			<button 
-				onclick={() => (expanded = !expanded)}
-				class="w-full flex items-center justify-between text-xs {colorClasses[providerColor].text} hover:opacity-80 cursor-pointer"
-			>
-				<span class="font-medium">Git Diff {branch ? `(${branch})` : ''}</span>
+			<div class="w-full flex items-center justify-between text-xs {colorClasses[providerColor].text}">
+				<button 
+					type="button"
+					onclick={() => (expanded = !expanded)}
+					class="font-medium hover:opacity-80 flex items-center gap-1 cursor-pointer"
+				>
+					<span>Git Diff {branch ? `(${branch})` : ''}</span>
+				</button>
 				<div class="flex items-center gap-2">
 					<button 
-						onclick={(e) => { e.stopPropagation(); copyDiff(); }}
-						class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 cursor-pointer"
+						type="button"
+						onclick={copyDiff}
+						class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1 cursor-pointer"
 					>
 						{#if copied}
 							<Check class="w-2.5 h-2.5 text-emerald-400" />
@@ -67,12 +74,16 @@
 							<span>Copy</span>
 						{/if}
 					</button>
-					<div class="flex items-center gap-1 text-[11px]">
+					<button 
+						type="button"
+						onclick={() => (expanded = !expanded)}
+						class="flex items-center gap-1 text-[11px] hover:opacity-80 cursor-pointer"
+					>
 						<span>{expanded ? 'Hide' : 'View'}</span>
 						<ChevronDown class="w-3.5 h-3.5 {expanded ? 'rotate-180' : ''} transition-transform" />
-					</div>
+					</button>
 				</div>
-			</button>
+			</div>
 			{#if expanded}
 				<pre class="mt-2 text-[11px] {colorClasses[providerColor].diffText} whitespace-pre-wrap overflow-x-auto max-h-60 p-2 bg-zinc-900/70 rounded border border-zinc-800">{diff}</pre>
 			{/if}

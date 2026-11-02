@@ -7,7 +7,10 @@
 	}
 
 	let { thoughts, defaultExpanded = false }: Props = $props();
-	let expanded = $state<boolean>(defaultExpanded);
+	let expanded = $state<boolean>(false);
+	$effect.pre(() => {
+		expanded = defaultExpanded;
+	});
 </script>
 
 {#if thoughts}

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { History, RotateCcw } from 'lucide-svelte';
-	import type { TaskRecord } from '$lib/types';
-	import { fmtTokens } from '$lib/types';
+	import type { TaskRecord } from '../types';
+	import { fmtTokens } from '../types';
 
 	interface Props {
 		history: TaskRecord[];

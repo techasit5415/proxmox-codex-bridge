@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Layers } from 'lucide-svelte';
-	import type { TaskResult } from '$lib/types';
-	import { fmtTokens, extractThoughtAndBody } from '$lib/types';
+	import type { TaskResult } from '../types';
+	import { fmtTokens, extractThoughtAndBody } from '../types';
 	import ChainOfThought from './ChainOfThought.svelte';
 	import DiffViewer from './DiffViewer.svelte';
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ExternalLink } from 'lucide-svelte';
-	import type { SystemStatus, TokenStats } from '$lib/types';
-	import { fmtTokens } from '$lib/types';
+	import type { SystemStatus, TokenStats } from '../types';
+	import { fmtTokens } from '../types';
 
 	interface Props {
 		activeWs: string;

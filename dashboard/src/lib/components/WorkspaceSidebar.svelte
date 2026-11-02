@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Plus, GitBranch } from 'lucide-svelte';
-	import type { WorkspaceDetails } from '$lib/types';
+	import type { WorkspaceDetails } from '../types';
 
 	interface Props {
 		workspaces: string[];

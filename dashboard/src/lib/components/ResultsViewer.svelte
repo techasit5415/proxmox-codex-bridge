@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Brain, Search, Copy, Check, FileCode } from 'lucide-svelte';
-	import type { TaskResult, WorkspaceDetails } from '$lib/types';
+	import type { TaskResult, WorkspaceDetails } from '../types';
 	import DualCompareView from './DualCompareView.svelte';
 	import SingleResultView from './SingleResultView.svelte';
 
