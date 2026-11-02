@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import util from 'util';
 import path from 'path';
 import fs from 'fs';
+import { saveTaskToHistory } from '../../../lib/history';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
@@ -180,6 +181,17 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (provider === 'deepseek') {
 			const taskBranch = branch?.trim() || `agent/deepseek-${timestamp}`;
 			const result = await runDeepSeekTask(target, prompt, taskBranch);
+			saveTaskToHistory({
+				workspace,
+				prompt,
+				provider: result.provider,
+				branch: result.branch,
+				status: result.status,
+				diff: result.diff,
+				logs: result.logs,
+				tokens: result.tokens,
+				mode: 'single'
+			});
 			return json({ success: true, mode: 'single', ...result });
 		}
 
@@ -190,6 +202,25 @@ export const POST: RequestHandler = async ({ request }) => {
 			// Run in parallel or sequential
 			const codexRes = await runCodexTask(target, prompt, codexBranch);
 			const deepseekRes = await runDeepSeekTask(target, prompt, deepseekBranch);
+
+			saveTaskToHistory({
+				workspace,
+				prompt,
+				provider: 'Dual Agents (Codex + DeepSeek)',
+				branch: `${codexBranch} & ${deepseekBranch}`,
+				status: 'Dual Completed',
+				diff: codexRes.diff,
+				logs: `=== CODEX LOGS ===\n${codexRes.logs}\n\n=== DEEPSEEK LOGS ===\n${deepseekRes.logs}`,
+				tokens: {
+					total_tokens: (codexRes.tokens?.total_tokens || 0) + (deepseekRes.tokens?.total_tokens || 0),
+					input_tokens: (codexRes.tokens?.input_tokens || 0) + (deepseekRes.tokens?.input_tokens || 0),
+					cached_input_tokens: (codexRes.tokens?.cached_input_tokens || 0),
+					output_tokens: (codexRes.tokens?.output_tokens || 0) + (deepseekRes.tokens?.output_tokens || 0)
+				},
+				mode: 'both',
+				codex: codexRes,
+				deepseek: deepseekRes
+			});
 
 			return json({
 				success: true,
@@ -202,6 +233,17 @@ export const POST: RequestHandler = async ({ request }) => {
 		// Default: Codex
 		const taskBranch = branch?.trim() || `agent/codex-${timestamp}`;
 		const result = await runCodexTask(target, prompt, taskBranch);
+		saveTaskToHistory({
+			workspace,
+			prompt,
+			provider: result.provider,
+			branch: result.branch,
+			status: result.status,
+			diff: result.diff,
+			logs: result.logs,
+			tokens: result.tokens,
+			mode: 'single'
+		});
 		return json({ success: true, mode: 'single', ...result });
 	} catch (err: any) {
 		return json({ error: err.message }, { status: 500 });

@@ -9,14 +9,18 @@
 		Plus, 
 		ExternalLink, 
 		Copy, 
-		Check,
-		RefreshCw,
-		Layers,
-		Search,
-		Brain,
-		ChevronDown,
-		ChevronRight,
-		SlidersHorizontal
+		Check, 
+		RefreshCw, 
+		Layers, 
+		Search, 
+		Brain, 
+		ChevronDown, 
+		ChevronRight, 
+		SlidersHorizontal,
+		History,
+		Clock,
+		RotateCcw,
+		X
 	} from 'lucide-svelte';
 
 	interface TokenStats {
@@ -55,6 +59,28 @@
 		files: string[];
 	}
 
+	interface TaskRecord {
+		id: string;
+		timestamp: number;
+		date: string;
+		workspace: string;
+		provider: string;
+		prompt: string;
+		branch: string;
+		status: string;
+		diff: string;
+		logs: string;
+		tokens?: {
+			total_tokens: number;
+			input_tokens: number;
+			cached_input_tokens: number;
+			output_tokens: number;
+		};
+		mode?: 'single' | 'both';
+		codex?: any;
+		deepseek?: any;
+	}
+
 	interface TaskResult {
 		provider: string;
 		branch: string;
@@ -74,6 +100,11 @@
 	let workspaces = $state<string[]>([]);
 	let activeWs = $state<string>('Android-Tv');
 	let wsDetails = $state<WorkspaceDetails | null>(null);
+
+	// History state
+	let history = $state<TaskRecord[]>([]);
+	let selectedTaskId = $state<string | null>(null);
+	let isLoadingHistory = $state<boolean>(false);
 
 	let prompt = $state<string>('');
 	let branch = $state<string>('');
@@ -113,7 +144,7 @@
 			const res = await fetch('/api/status');
 			if (res.ok) {
 				status = await res.json();
-				if (status?.tokens) tokenStats = status.tokens;
+				if (status?.tokens && !selectedTaskId) tokenStats = status.tokens;
 			}
 		} catch (e) {
 			console.error(e);
@@ -150,9 +181,97 @@
 		fetchWorkspaceDetails(ws);
 	}
 
+	async function fetchHistory(autoSelectLatest = false) {
+		isLoadingHistory = true;
+		try {
+			const res = await fetch('/api/history');
+			if (res.ok) {
+				const data = await res.json();
+				history = data.history || [];
+				if (autoSelectLatest && history.length > 0 && !singleResult && !dualCodex && !isExecuting) {
+					selectHistoryTask(history[0]);
+				}
+			}
+		} catch (e) {
+			console.error('Error fetching history:', e);
+		} finally {
+			isLoadingHistory = false;
+		}
+	}
+
+	function selectHistoryTask(item: TaskRecord) {
+		selectedTaskId = item.id;
+		prompt = item.prompt || '';
+		
+		if (item.workspace && item.workspace !== activeWs && workspaces.includes(item.workspace)) {
+			activeWs = item.workspace;
+			fetchWorkspaceDetails(item.workspace);
+		}
+
+		if (item.mode === 'both' && item.codex && item.deepseek) {
+			dualCodex = item.codex;
+			dualDeepSeek = item.deepseek;
+			singleResult = null;
+			provider = 'both';
+		} else {
+			singleResult = {
+				provider: item.provider,
+				branch: item.branch,
+				status: item.status,
+				diff: item.diff,
+				logs: item.logs,
+				tokens: item.tokens
+			};
+			dualCodex = null;
+			dualDeepSeek = null;
+			if (item.provider?.includes('DeepSeek')) {
+				provider = 'deepseek';
+			} else {
+				provider = 'codex';
+			}
+		}
+
+		taskBadge = 'Loaded from History';
+		taskBadgeType = 'idle';
+		activeTab = 'thoughts';
+
+		if (item.tokens) {
+			tokenStats = {
+				totalTokens: item.tokens.total_tokens || 0,
+				inputTokens: item.tokens.input_tokens || 0,
+				cachedTokens: item.tokens.cached_input_tokens || 0,
+				outputTokens: item.tokens.output_tokens || 0,
+				sessionCount: history.length,
+				latest: item.tokens
+			};
+		}
+	}
+
+	function clearSelectedTask() {
+		selectedTaskId = null;
+		prompt = '';
+		branch = '';
+		singleResult = null;
+		dualCodex = null;
+		dualDeepSeek = null;
+		taskBadge = 'Ready';
+		taskBadgeType = 'idle';
+		fetchStatus();
+	}
+
+	function formatTime(ts: number): string {
+		if (!ts) return '';
+		const d = new Date(ts);
+		const isToday = new Date().toDateString() === d.toDateString();
+		const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		if (isToday) return timeStr;
+		return `${d.getMonth() + 1}/${d.getDate()} ${timeStr}`;
+	}
+
 	async function executeTask() {
 		if (!prompt.trim() || isExecuting) return;
 		isExecuting = true;
+		selectedTaskId = null;
 		taskBadge = provider === 'both' ? 'Running Dual Agents...' : 'Executing...';
 		taskBadgeType = 'running';
 
@@ -181,6 +300,7 @@
 				activeTab = 'thoughts';
 				fetchWorkspaceDetails(activeWs);
 				fetchStatus();
+				await fetchHistory(false);
 			} else {
 				taskBadge = 'Failed';
 				taskBadgeType = 'error';
@@ -332,9 +452,10 @@
 		}).filter(item => item.matched);
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		fetchStatus();
 		fetchWorkspaces();
+		await fetchHistory(true);
 		const interval = setInterval(fetchStatus, 6000);
 		return () => clearInterval(interval);
 	});
@@ -438,6 +559,49 @@
 			</div>
 		{/if}
 
+		<!-- Recent Runs / Task History -->
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 flex flex-col gap-2">
+			<div class="flex items-center justify-between text-xs">
+				<div class="flex items-center gap-1.5 text-zinc-400 font-medium">
+					<History class="w-3.5 h-3.5 text-zinc-500" />
+					<span>History</span>
+					<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono">{history.length}</span>
+				</div>
+				<button 
+					onclick={() => fetchHistory(false)}
+					title="Refresh History"
+					class="text-zinc-500 hover:text-zinc-300 transition"
+				>
+					<RotateCcw class="w-3 h-3 {isLoadingHistory ? 'animate-spin' : ''}" />
+				</button>
+			</div>
+
+			<div class="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-0.5">
+				{#each history as item}
+					<button
+						onclick={() => selectHistoryTask(item)}
+						class="w-full text-left p-2 rounded text-xs transition border flex flex-col gap-1 {selectedTaskId === item.id ? 'bg-zinc-800 border-zinc-700 text-zinc-100 shadow-xs' : 'bg-zinc-950/40 border-zinc-900 text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-300'}"
+					>
+						<div class="flex items-center justify-between font-mono text-[10px]">
+							<span class="px-1.5 py-0.2 rounded font-medium {item.provider?.includes('DeepSeek') ? 'bg-violet-950/70 text-violet-300 border border-violet-800/60' : item.provider?.includes('Dual') ? 'bg-indigo-950/70 text-indigo-300 border border-indigo-800/60' : 'bg-zinc-800 text-zinc-300 border border-zinc-700'}">
+								{item.provider?.includes('DeepSeek') ? 'DeepSeek' : item.provider?.includes('Dual') ? 'Dual' : 'Codex'}
+							</span>
+							<span class="text-zinc-500">{formatTime(item.timestamp)}</span>
+						</div>
+						<div class="text-[11px] truncate text-zinc-200 font-sans">
+							{item.prompt || '(No prompt)'}
+						</div>
+						<div class="flex items-center justify-between font-mono text-[10px] text-zinc-500">
+							<span class="truncate max-w-[100px]">{item.workspace}</span>
+							<span>{fmt(item.tokens?.total_tokens)} tok</span>
+						</div>
+					</button>
+				{:else}
+					<div class="text-[11px] text-zinc-600 italic py-2 text-center">No past runs yet.</div>
+				{/each}
+			</div>
+		</div>
+
 		<!-- Minimal Command Line -->
 		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 flex flex-col gap-2">
 			<span class="text-[11px] font-medium text-zinc-400">Quick Command</span>
@@ -466,6 +630,22 @@
 
 		<!-- Task Input Card with Clean Provider Switcher -->
 		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-4 flex flex-col gap-3">
+			{#if selectedTaskId}
+				<div class="flex items-center justify-between px-3 py-1.5 rounded-md bg-zinc-950/80 border border-zinc-800 text-xs">
+					<div class="flex items-center gap-1.5 text-zinc-300">
+						<Clock class="w-3.5 h-3.5 text-amber-400" />
+						<span class="text-zinc-400">Viewing archived task run</span>
+					</div>
+					<button 
+						onclick={clearSelectedTask}
+						class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] transition font-medium flex items-center gap-1"
+					>
+						<Plus class="w-3 h-3" />
+						<span>New Task</span>
+					</button>
+				</div>
+			{/if}
+
 			<div class="flex items-center justify-between text-xs flex-wrap gap-2">
 				<div class="flex items-center gap-1.5">
 					<span class="font-medium text-zinc-300">Prompt</span>
