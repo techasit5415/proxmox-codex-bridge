@@ -1,208 +1,153 @@
-# Antigravity to Multi-Agent Remote Bridge (Proxmox CT)
+# 🌉 Proxmox Codex Bridge & Multi-Agent Platform
 
-ระบบ **Multi-Agent Remote Development & Dual AI Architecture** ที่เชื่อมต่อ **Google Antigravity IDE** เข้ากับ **OpenAI Codex CLI (gpt-6.1-sol)** และ **DeepSeek R1 (14b KMITL GPU Cluster)** บน Proxmox LXC Container ทำงานแบบ Background 24/7 ควบคุมได้ทั้งจาก **Antigravity Chat (MCP over SSH)** และ **Web Dashboard (SvelteKit 3 + Tailwind v4)**
+ระบบเชื่อมต่อและบริดจ์คำสั่งอัจฉริยะ (Multi-Agent Bridge) ที่ผสานการทำงานระหว่าง **Google Antigravity**, **OpenAI Codex (gpt-6.1-sol)** บน Proxmox LXC Container และ **DeepSeek R1 (14b GPU)** บน CS KMITL GPU Cluster พร้อม Web Dashboard ควบคุมแบบ Real-time และระบบเปรียบเทียบผลลัพธ์แบบ Dual Comparison
 
----
-
-## 📑 สารบัญ
-1. [ภาพรวมสถาปัตยกรรม (Tri-Machine Architecture)](#1-ภาพรวมสถาปัตยกรรม-tri-machine-architecture)
-2. [ขั้นตอนการติดตั้งทั้งหมดตั้งแต่ต้น (Fresh Install on Proxmox CT)](#2-ขั้นตอนการติดตั้งทั้งหมดตั้งแต่ต้น-fresh-install-on-proxmox-ct)
-3. [ถ้าไม่มี Workspace บน CT ต้องทำอย่างไร? (Workspace Management)](#3-ถ้าไม่มี-workspace-บน-ct-ต้องทำอย่างไร-workspace-management)
-4. [สรุปปัญหาและแนวทางแก้ไขทั้งหมด (Post-Mortem & Troubleshooting Guide)](#4-สรุปปัญหาและแนวทางแก้ไขทั้งหมด-post-mortem--troubleshooting-guide)
-5. [วิธีเชื่อมต่อ Antigravity บนเครื่องใหม่ (Client Setup on Another PC)](#5-วิธีเชื่อมต่อ-antigravity-บนเครื่องใหม่-client-setup-on-another-pc)
-6. [การใช้งาน Dashboard และฟีเจอร์ Side-by-Side Dual View](#6-การใช้งาน-dashboard-และฟีเจอร์-side-by-side-dual-view)
-7. [คำสั่งจัดการและ Systemd Service](#7-คำสั่งจัดการและ-systemd-service)
+🌐 **Web Dashboard:** [http://192.168.5.159:3000](http://192.168.5.159:3000) (เข้าถึงผ่านเครือข่ายภายใน)
 
 ---
 
-## 1. ภาพรวมสถาปัตยกรรม (Tri-Machine Architecture)
+## 🏗️ สถาปัตยกรรมระบบ (System Architecture)
+
+```mermaid
+flowchart TD
+    User["👨‍💻 ผู้ใช้งาน / พัฒนา"] -->|Prompt & Commands| Antigravity["🛸 Antigravity (Coding Agent)"]
+    User -->|Direct Web UI| Dashboard["🌐 Web Dashboard (Port 3000)\nSvelte 5 + SvelteKit + Tailwind"]
+    
+    subgraph Antigravity_Config["Local Agent Customizations"]
+        GlobalRules["📜 Global Rules (~/.gemini/config/rules/)\n- Strict Anti-Hallucination\n- Auto Tool Routing"]
+        MCPConfig["⚙️ mcp_config.json\nproxmox-agent (SSH StdIO)"]
+    end
+    Antigravity --- Antigravity_Config
+    
+    Antigravity -->|MCP over SSH| CT["🖥️ Proxmox CT (192.168.5.159)"]
+    Dashboard -->|REST API| Backend["⚡ Server Backend (server.mjs / +server.ts)"]
+    Backend --- CT
+
+    subgraph Proxmox_CT["Proxmox LXC Container"]
+        Backend
+        Intent["🎯 Task Intent Classifier\n(💻 Code vs 💡 General/Planning)"]
+        Workspaces["📁 Workspaces & Auto-Temp (/opt/agent-bridge/workspaces/)"]
+        History["📜 tasks_history.json (Real-time Polling)"]
+        
+        CodexEngine["🤖 Engine 1: OpenAI Codex CLI\n(gpt-6.1-sol, Dangerously Bypass Sandbox)"]
+    end
+
+    subgraph GPU_Cluster["CS KMITL AI GPU Cluster"]
+        DeepSeekEngine["🧠 Engine 2: DeepSeek R1 14b\n(aipass.cskmitl.com NDJSON Stream)"]
+    end
+
+    Backend -->|Local CLI Pipe| CodexEngine
+    Backend -->|HTTPS API / v1 / api/chat| DeepSeekEngine
+```
+
+---
+
+## 🚀 ฟีเจอร์หลัก (Core Features)
+
+| ฟีเจอร์ | รายละเอียด | สถานะ |
+| :--- | :--- | :---: |
+| **11 Modular Components** | แยกโค้ดหน้าเว็บเป็น 11 คอมโพเนนต์อิสระบน Svelte 5 ด้วย Runes | ✅ ใช้งานจริง |
+| **Auto Temp Workspace** | สร้าง Workspace อัตโนมัติตามชื่อคำถาม (Slugify ภาษาไทย/อังกฤษ) | ✅ ใช้งานจริง |
+| **Safe Trash & Clean** | ปุ่มลบ Workspace รายตัว และปุ่มล้างโฟลเดอร์ Temp ทั้งหมด | ✅ ใช้งานจริง |
+| **Task Intent Detection** | จำแนก `💻 Code Task` vs `💡 General / Planning` อัตโนมัติ ป้องกัน Timeout | ✅ ใช้งานจริง |
+| **Anti-Hallucination Policy** | กฎเหล็กระดับระบบ ห้ามจำลองคำตอบ ต้องรันโมเดลจริงบนเซิร์ฟเวอร์เสมอ | ✅ ใช้งานจริง |
+| **Dual Compare View** | รัน 2 โมเดลพร้อมกัน แยก Git branch และเปรียบเทียบคำตอบคู่ขนาน | ✅ ใช้งานจริง |
+| **Clean State on F5** | หน้าเว็บเปิดมาด้วยสถานะพร้อมพิมพ์ ไม่ Auto-select งานเก่ากวนใจ | ✅ ใช้งานจริง |
+
+---
+
+## 1. 🧩 โครงสร้าง 11 Modular Components (Svelte 5 Runes)
+
+หน้าเว็บ Web Dashboard พัฒนาด้วย **Svelte 5 บน SvelteKit** และสไตล์ด้วย **Tailwind CSS v4** โดยแยกหน้าที่ออกเป็น 11 Modular Components ใน [`dashboard/src/lib/components/`](dashboard/src/lib/components/):
 
 ```text
-[ คอมพิวเตอร์ของคุณ (เครื่อง 1 หรือ โน้ตบุ๊กเครื่องอื่น) ]
-       │
-       ├── 1. Antigravity Chat (สั่งงานผ่าน MCP over SSH: run_dual_task, run_codex_task, etc.)
-       └── 2. Web Dashboard (เปิดผ่านเบราว์เซอร์ http://192.168.5.159:3000)
-               │
-               ▼
-[ Proxmox LXC Container (CT 192.168.5.159) ]
-       ├── Web Dashboard: SvelteKit 3 + Tailwind v4 + TypeScript (Systemd: agent-web, Port 3000)
-       ├── MCP Server: /opt/agent-bridge/server.mjs (Stdio Transport over SSH)
-       ├── History Store: /opt/agent-bridge/tasks_history.json
-       ├── Workspaces: /opt/agent-bridge/workspaces/<repo-name>/
-       │
-       ├── Engine 1 (Cloud): OpenAI Codex CLI (gpt-6.1-sol / ChatGPT Plus)
-       └── Engine 2 (On-Prem GPU): DeepSeek R1 14b (CS KMITL GPU Cluster: aipass.cskmitl.com)
+dashboard/src/lib/components/
+├── Header.svelte             # แถบด้านบน แสดงสถานะเซิร์ฟเวอร์ โควต้า และ Token Stats
+├── WorkspaceSidebar.svelte   # แถบด้านซ้าย จัดการ Workspace, Auto Temp และปุ่มลบ Trash
+├── HistorySidebar.svelte     # แถบประวัติงาน ค้นหาและกรองประวัติตาม Provider
+├── TaskInput.svelte          # กล่องรับ Prompt พร้อมป้าย Intent และตัวเลือก Model
+├── QuickCommand.svelte       # คอนโซลรันคำสั่ง Bash ด่วนใน Workspace ปัจจุบัน
+├── ResultsViewer.svelte      # ตัวจัดการแท็บ Response, Git Diff, Raw Logs และ Files
+├── DualCompareView.svelte    # หน้าจอเปรียบเทียบผลลัพธ์ Codex vs DeepSeek คู่กัน
+├── SingleResultView.svelte   # หน้าจอแสดงผลลัพธ์ของโมเดลเดี่ยว
+├── DiffViewer.svelte         # แสดง Git diff ไฮไลต์โค้ดที่เปลี่ยนแปลง
+├── ChainOfThought.svelte     # การ์ดพับ/ขยายข้อความความคิด (<think>) ของ DeepSeek
+└── CloneModal.svelte         # ป๊อปอัปโคลน Git Repository เข้าสู่ Workspace
 ```
+
+### การจัดการ State ด้วย Svelte 5 Runes:
+* `$state(...)`: จัดการ Reactive State หลัก เช่น `history`, `activeWs`, `prompt`, `singleResult`, `dualCodex`
+* `$derived(...)`: คำนวณค่าอัตโนมัติเมื่อ State เปลี่ยน เช่น `extractThoughtAndBody(result.logs)`
+* `$props()` / `$bindable()`: ถ่ายทอดข้อมูลแบบ Two-way binding ระหว่างหน้าหลักและ Input Form
+* **SSR Hydration Protection:** ดึงข้อมูลเริ่มต้นจาก `PageData` ส่งเข้า `$state` โดยตรง ป้องกันปัญหาหน้าเว็บกระพริบหรือข้อมูลประวัติว่างเปล่าขณะโหลดครั้งแรก
 
 ---
 
-## 2. ขั้นตอนการติดตั้งทั้งหมดตั้งแต่ต้น (Fresh Install on Proxmox CT)
+## 2. 🗂️ ระบบ Auto Temp Workspace และการจัดการพื้นที่
 
-หากสร้าง Proxmox LXC Container ใหม่ (แนะนำ Ubuntu 22.04 หรือ 24.04 หรือ Debian 12):
+ระบบช่วยให้ผู้ใช้สั่งงานได้ทันทีโดยไม่ต้องสร้างโฟลเดอร์ล่วงหน้า:
 
-### 2.1 ติดตั้ง Packages พื้นฐานและ Node.js 22 LTS
-```bash
-# 1. อัปเดตระบบ
-apt update && apt upgrade -y
-apt install -y git curl wget ripgrep jq build-essential
+### 2.1 Auto Temp Workspace:
+* เมื่อเลือก workspace เป็น `Auto Temp` แล้วพิมพ์คำสั่ง ระบบจะนำข้อความ Prompt มาสร้างชื่อโฟลเดอร์อัตโนมัติ:
+  ```text
+  temp-<slug-ภาษาไทยหรืออังกฤษ>-<รหัสสุ่ม 4 ตัว>
+  ตัวอย่าง: temp-สรุปข้อดีรถไฟความเร็วสูง-a9b1
+  ```
+* ระบบสร้างไฟล์ `README.md` และเริ่มต้น Git repository (`git init`) ให้พร้อมทำงานทันที
 
-# 2. ติดตั้ง Node.js 22.x
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt install -y nodejs
-
-# ตรวจสอบเวอร์ชัน
-node -v   # v22.x.x
-npm -v    # 10.x.x
-```
-
-### 2.2 ติดตั้งและล็อกอิน OpenAI Codex CLI
-```bash
-npm install -g @openai/codex
-
-# ล็อกอิน ChatGPT Plus / OpenAI Account (จะให้ copy URL ไปเปิดในเบราว์เซอร์เพื่อกดยืนยัน)
-codex login
-```
-
-### 2.3 ตั้งค่าโครงสร้างโฟลเดอร์ของ Bridge
-```bash
-mkdir -p /opt/agent-bridge/workspaces
-cd /opt/agent-bridge
-
-# โคลนโปรเจกต์นี้ลงใน /opt/agent-bridge
-git clone https://github.com/techasit5415/proxmox-codex-bridge.git .
-```
-
-### 2.4 ติดตั้ง Dependency ของ Dashboard และ Build
-```bash
-cd /opt/agent-bridge/dashboard
-npm install
-npm run build
-```
-
-### 2.5 สร้าง Systemd Service เพื่อให้ Dashboard รันตลอดเวลา (Auto-start on Boot)
-สร้างไฟล์ `/etc/systemd/system/agent-web.service`:
-```ini
-[Unit]
-Description=Codex Agent SvelteKit Dashboard
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/agent-bridge/dashboard
-ExecStart=/usr/bin/node build/index.js
-Restart=always
-RestartSec=3
-Environment=NODE_ENV=production
-Environment=PORT=3000
-Environment=HOST=0.0.0.0
-Environment=LANG=C.UTF-8
-Environment=LC_ALL=C.UTF-8
-
-[Install]
-WantedBy=multi-user.target
-```
-
-เปิดใช้งาน service:
-```bash
-systemctl daemon-reload
-systemctl enable --now agent-web
-systemctl status agent-web
-```
+### 2.2 การลบ Workspace (Trash & Clean):
+* **ลบรายตัว (Individual Delete):** มีปุ่มถังขยะสำหรับแต่ละ workspace (พร้อม Dialog ยืนยัน)
+* **ล้าง Temp ทั้งหมด (Clean Temp):** ปุ่มลบโฟลเดอร์ที่ขึ้นต้นด้วย `temp-*` ทั้งหมดในคลิกเดียวเพื่อคืนพื้นที่ฮาร์ดดิสก์
+* **ประวัติไม่สูญหาย:** การลบ workspace จะไม่ลบประวัติงานใน `tasks_history.json` ทำให้ยังสามารถเปิดดูผลลัพธ์และ Diff เก่าผ่านหน้า Dashboard ได้ตลอดเวลา
 
 ---
 
-## 3. ถ้าไม่มี Workspace บน CT ต้องทำอย่างไร? (Workspace Management)
+## 3. 🎯 Task Intent Detection (💻 Code vs 💡 General / Planning)
 
-### Workspace คืออะไร?
-Workspace บน Server คือ**โฟลเดอร์โปรเจกต์ที่มี Git Repository อยู่ภายใต้ `/opt/agent-bridge/workspaces/`**
-โมเดลทั้งสองตัว (Codex และ DeepSeek R1) ต้องใช้ Git เพื่อแตก branch ทำงานอัตโนมัติ (เช่น `agent/codex-*` และ `agent/deepseek-*`) และวัด `git diff` เพื่อเปรียบเทียบผลลัพธ์
+ปัญหาเดิมของระบบ Autonomous Coding Agent คือเมื่อได้รับคำถามทั่วไป (เช่น วางแผนท่องเที่ยว, ปรึกษาความรู้, รีวิวบทความ) ตัวโมเดลจะพยายามวิ่งค้นหาไฟล์โค้ดในโฟลเดอร์ จนเกิดอาการติดลูปหรือ Timeout
 
-หากคุณสร้าง CT ขึ้นมาใหม่ แล้วในโฟลเดอร์ `/opt/agent-bridge/workspaces/` ว่างเปล่า ไม่มีโปรเจกต์เลย สามารถเพิ่มได้ **3 วิธี** ดังนี้:
+ระบบจึงติดตั้ง **Task Intent Classifier (`detectTaskType`)**:
 
-### วิธีที่ 1: สั่งจาก Antigravity Chat โดยตรง (แนะนำ - สะดวกที่สุด)
-คุณไม่ต้องเปิดหน้าเว็บ หรือเข้า SSH เลย เพียงแค่สั่ง Antigravity ในแชท:
-> *"ช่วยโคลน `https://github.com/techasit5415/Android-Tv.git` มาไว้ที่ workspace หน่อย"*
-
-Antigravity จะเรียกเครื่องมือ `proxmox-agent:clone_repo` โคลนมาไว้ที่ `/opt/agent-bridge/workspaces/Android-Tv` ให้อัตโนมัติทันที
-
-### วิธีที่ 2: โคลนผ่านหน้าเว็บ Dashboard
-1. เปิดหน้าเว็บ `http://192.168.5.159:3000`
-2. มองที่มุมซ้ายบนของเมนู **Workspaces** จะมีปุ่ม **`+ Clone`**
-3. ใส่ Git URL เช่น `https://github.com/username/project.git`
-4. (ตัวเลือก) ระบุชื่อโฟลเดอร์ที่ต้องการ
-5. กดปุ่ม **Clone** ระบบจะดึง repository ลงมาและปรากฏในรายการ Workspace ทันที
-
-### วิธีที่ 3: สร้างโปรเจกต์เปล่าใหม่จากศูนย์ (Blank Project Init)
-ถ้าต้องการเริ่มสร้างโปรเจกต์ใหม่ที่ยังไม่มีบน GitHub สามารถใช้ช่อง **Quick Command** บนหน้าเว็บ หรือรันผ่าน SSH:
-```bash
-mkdir -p /opt/agent-bridge/workspaces/my-new-project
-cd /opt/agent-bridge/workspaces/my-new-project
-git init
-git commit --allow-empty -m "initial commit"
+```typescript
+// dashboard/src/lib/types.ts & server.mjs
+export function detectTaskType(prompt: string): 'code' | 'general'
 ```
-*(ต้องมีอย่างน้อย 1 commit หรือ branch เพื่อให้ Git branch/diff ใช้งานได้สมบูรณ์)*
+
+### พฤติกรรมที่ปรับเปลี่ยนตามประเภทงาน:
+| ประเภทงาน | ป้ายบนหน้าเว็บ | พฤติกรรมของ Codex (ChatGPT) | พฤติกรรมของ DeepSeek R1 |
+| :--- | :---: | :--- | :--- |
+| **💻 Code Task** | `💻 Code Task` | ตรวจสอบไฟล์ในโปรเจกต์, สร้าง Branch, เขียนโค้ด, รัน Unit Test, สร้าง Git Diff | ส่งโครงสร้างไฟล์โปรเจกต์ และสั่งให้โมเดลตอบในรูปแบบ `file:path/to/file` |
+| **💡 General / Planning** | `💡 General / Planning` | ส่งคำแนะนำให้ตอบตรงประเด็นทันที ข้ามขั้นตอนค้นหาไฟล์ใน shell **(ตอบเร็วขึ้นจาก 15 นาที เหลือเพียง 7 วินาที!)** | สวมบทบาทเป็น AI Advisor ตอบภาษาไทยอย่างละเอียด ไม่ต้องพยายามแปลงเป็นไฟล์โค้ด |
 
 ---
 
-## 4. สรุปปัญหาและแนวทางแก้ไขทั้งหมด (Post-Mortem & Troubleshooting Guide)
+## 4. 🛡️ กฎเหล็ก Anti-Hallucination & Multi-Agent Strict Policy
 
-ตลอดการพัฒนาระบบ Multi-Agent Bridge มีปัญหาเชิงลึก 6 ประเด็นหลักที่เกิดขึ้นและได้รับการแก้ไขแล้ว ดังนี้:
+เพื่อความน่าเชื่อถือและความโปร่งใสสูงสุด ระบบได้กำหนด **Global Rules** ระดับเครื่องไว้ที่ `~/.gemini/config/rules/proxmox-codex-bridge.md` และ `~/.gemini/config/AGENTS.md`:
 
-### 4.1 ปัญหา DeepSeek R1 เจอ 504 Gateway Time-out
-* **อาการ:** เมื่อรันโจทย์วิเคราะห์ยาวๆ บนโมเดล `deepseek-r1:14b` ของ KMITL GPU API จะหลุด Timeout ตอบกลับมาเป็น `504 Gateway Time-out`
-* **สาเหตุ:** เบื้องหลัง Nginx Reverse Proxy ของเซิร์ฟเวอร์มหาลัยตั้ง `proxy_read_timeout 60s` ไว้ หากเรียก API แบบปกติ (`stream: false`) แล้ว DeepSeek R1 คิดแบบ Chain of Thought นานเกิน 60 วินาที Nginx จะตัดการเชื่อมต่อทันที
-* **วิธีแก้:** ปรับการเชื่อมต่อใน `server.mjs` และ `api/task/+server.ts` ให้ใช้ **`stream: true` (NDJSON Stream)** โดยใช้ `ReadableStream.getReader()` รับ chunk ข้อมูลทีละ token ทันที ทำให้ Nginx มีข้อมูลไหลผ่านตลอดเวลา ไม่โดนตัด Timeout แม้โมเดลจะคิดนานหลายนาที
-
-### 4.2 ปัญหา DNS ไม่ Resolve โดเมน `aipass.cskmitl.com` (ENOTFOUND)
-* **อาการ:** Node.js เกิดข้อผิดพลาด `getaddrinfo ENOTFOUND aipass.cskmitl.com`
-* **สาเหตุ:** ไฟล์ `/etc/resolv.conf` บน Proxmox CT มี DNS ลำดับแรกชี้ไปที่ Gateway วงใน (`192.168.5.254`) ซึ่งไม่ forward คำขอ DNS ภายนอกอย่างถูกต้อง เมื่อ query ล้มเหลว Linux จึงหยุดก่อนไปหา `8.8.8.8`
-* **วิธีแก้:** บันทึก IP ตรง `161.246.157.217 aipass.cskmitl.com` ลงใน `/etc/hosts` บน CT ทำให้ Server คุยกับ GPU Cluster ได้เสมอตลอด 24 ชม. แม้ DNS วงในจะมีปัญหา
-
-### 4.3 ปัญหาภาษาไทยกลายเป็น `???` และ Shell Syntax Error
-* **อาการ:** เมื่อผู้ใช้สั่งงานภาษาไทย หรือมีข้อความที่มีวงเล็บ เช่น `(เช่น โหมดฟังเพลง...)` ตัวหนังสือกลายเป็นเครื่องหมายคำถาม หรือ PowerShell พยายามประเมินวงเล็บเป็น subexpression
-* **สาเหตุ:** การส่งข้อความภาษาไทยผ่าน shell argument (`/bin/sh -c "codex exec ... \"$prompt\""`) ใน Linux environment ที่ไม่ได้เซ็ต UTF-8 locale จะถูกแปลงเป็น ASCII replacement characters
-* **วิธีแก้:** 
-  1. เขียน Prompt ลงไฟล์ UTF-8 ชั่วคราว (`/tmp/codex_prompt_*.txt`)
-  2. ไปป์เข้า Stdin ของ `codex exec -`
-  3. กำหนดตัวแปรสภาพแวดล้อม `{ env: { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } }` ในทุก child process
-
-### 4.4 ปัญหา MCP Tool Deadline Exceeded (> 3 นาที)
-* **อาการ:** เมื่อเรียก `run_dual_task` ผ่าน Antigravity MCP แล้วเกิด error `context deadline exceeded (3m0s)`
-* **สาเหตุ:** เดิมทีระบบรัน Codex CLI จนเสร็จ (~1.5 นาที) แล้วจึงเริ่ม DeepSeek R1 (~1.5 นาที) รวมกันเกิน 3 นาที
-* **วิธีแก้:** รัน Network Query ของ DeepSeek R1 ขนานไปกับ Codex CLI ทันที โดยใช้ `Promise.all` ทำให้เวลาในการประมวลผล Dual Task ลดลงเหลือเพียงเวลาของโมเดลที่ช้าที่สุด (~35-45 วินาที) ไม่เกิน 3 นาทีแน่นอน
-
-### 4.5 ปัญหา Svelte 5 `{@const}` Tag Compilation Placement
-* **อาการ:** รัน `npm run build` ใน SvelteKit แล้วล้มเหลวด้วยข้อผิดพลาด `const_tag_invalid_placement`
-* **สาเหตุ:** Svelte 5 มี strict syntax rule ว่า `{@const}` ต้องวางเป็น immediate child ของบล็อกควบคุมเท่านั้น (`{#if}`, `{#each}`, `{:else}`) ห้ามวางซ้อนอยู่ใต้แท็ก HTML ทั่วไป เช่น `<div>`
-* **วิธีแก้:** ย้ายการประกาศ `{@const parsed = extractThoughtAndBody(...)}` ไปไว้ใต้บรรทัด `{#if}` ทันที
-
-### 4.6 ปัญหาป้ายในแถบ History แสดงผลโมเดลสับสน
-* **อาการ:** งานที่เป็น Dual Task แสดงป้าย tag สีม่วงเป็น `DeepSeek` ในแถบประวัติ
-* **สาเหตุ:** เงื่อนไขการแสดงผลตรวจ `item.provider?.includes('DeepSeek')` ก่อน ซึ่งชื่อ `"Dual Agents (Codex + DeepSeek)"` มีคำว่า DeepSeek อยู่ด้วย
-* **วิธีแก้:** ปรับลำดับการตรวจสอบให้เช็ค `item.mode === 'both' || item.provider?.includes('Dual')` เป็นลำดับแรกสุด
+1. **ห้าม Roleplay หรือกุเรื่องจำลองบทสนทนาเด็ดขาด:**  
+   AI ผู้ช่วยต้องไม่สมมุติตัวเองเป็น ChatGPT หรือ DeepSeek และต้องไม่แต่งบทละครการประชุม (AI Summit) ขึ้นมาเอง
+2. **เรียกใช้โมเดลจริงเสมอ:**  
+   เมื่อผู้ใช้พูดถึง *"ChatGPT"*, *"Codex"*, *"DeepSeek"*, หรือ *"ทั้ง 3 ตัวช่วยกันคิด"* ระบบจะต้องส่งคำขอไปยัง Proxmox Bridge (`run_dual_task`, `run_codex_task`, `run_deepseek_task`) เพื่อรันบนเครื่องจริงเท่านั้น
+3. **รายงานสถานะอย่างตรงไปตรงมา:**  
+   หากโมเดลตัวใดติดปัญหาคิว (เช่น DeepSeek ติด 403 GPU slot) หรือเกิด Timeout ระบบจะแจ้งสาเหตุที่แท้จริงให้ผู้ใช้ทราบทันที ไม่มีการแอบส่ง curl เองนอกรอบโดยไม่แจ้ง
 
 ---
 
-## 5. วิธีเชื่อมต่อ Antigravity บนเครื่องใหม่ (Client Setup on Another PC)
+## 5. 📊 Dual Compare View & ประวัติแบบ Real-time
 
-เมื่อต้องการใช้โน้ตบุ๊กหรือคอมพิวเตอร์เครื่องอื่นมาสั่งงาน Proxmox CT เดียวกัน:
+* **เปรียบเทียบผลลัพธ์แบบข้างต่อข้าง (Dual Comparison):**  
+  เมื่อรันในโหมด `Both (Compare)` หน้าเว็บจะแบ่งหน้าจอแสดงผลลัพธ์ของ Codex และ DeepSeek R1 พร้อมกัน สามารถสลับดูผลของแต่ละตัว หรือดู Git Diff ที่ทั้งสองฝ่ายแก้ไขแยกตาม Branch
+* **การตรวจสอบความคิด (Chain-of-Thought):**  
+  แท็บ Response & Reasoning มีการ์ดพับ/ขยายเพื่ออ่านกระบวนการคิดและวางแผน (`<think>...</think>`) ของโมเดล DeepSeek R1
+* **Token Tracking:**  
+  ติดตามจำนวน Token ที่ใช้ ทั้ง Input, Cached Tokens, และ Completion Tokens อย่างแม่นยำ
 
-### ขั้นตอนที่ 1: ติดตั้ง SSH Key ไปที่ Server
-เปิด PowerShell หรือ Terminal บนเครื่องใหม่:
-```powershell
-# บน Windows:
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@192.168.5.159 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+---
 
-# บน Mac/Linux:
-ssh-copy-id root@192.168.5.159
-```
+## 🛠️ การติดตั้งและการเชื่อมต่อ (Setup & Deployment)
 
-### ขั้นตอนที่ 2: ตั้งค่า Antigravity MCP Configuration
-เพิ่มบล็อกนี้ลงในไฟล์การตั้งค่า MCP:
-* **Windows:** `C:\Users\<username>\.gemini\config\mcp_config.json`
-* **Mac/Linux:** `~/.gemini/config/mcp_config.json`
-
+### 1. การตั้งค่า MCP Server บนเครื่องผู้พัฒนา (`~/.gemini/config/mcp_config.json`):
 ```json
 {
   "mcpServers": {
@@ -219,40 +164,31 @@ ssh-copy-id root@192.168.5.159
 }
 ```
 
-เมื่อเปิด Antigravity ขึ้นมา จะมี Tools ให้ใช้งานทันที:
-* `proxmox-agent:run_dual_task` (รันทั้งสองโมเดลพร้อมกัน)
-* `proxmox-agent:run_codex_task` (รันเฉพาะ Codex)
-* `proxmox-agent:run_deepseek_task` (รันเฉพาะ DeepSeek R1)
-* `proxmox-agent:list_workspaces`
-* `proxmox-agent:clone_repo`
-
----
-
-## 6. การใช้งาน Dashboard และฟีเจอร์ Side-by-Side Dual View
-
-เปิดเบราว์เซอร์ไปที่: **`http://192.168.5.159:3000`**
-
-* **ตัวกรองประวัติ (History Filter):**
-  * ปุ่ม `[All]` | `[Codex]` | `[R1]` | `[Dual]` กรองดูเฉพาะโมเดลที่ต้องการได้ทันที
-* **สลับมุมมองผลลัพธ์ (Model View Switcher):**
-  * **`[Side-by-Side (Compare)]`**: แบ่ง 2 คอลัมน์ ซ้าย (Codex: gpt-6.1-sol) ขวา (DeepSeek R1: 14b GPU) เทียบคำตอบและการวิเคราะห์ของทั้งสองโมเดล
-  * **`[Codex Only]`**: ดูเฉพาะคำตอบ, การวิเคราะห์ และ Git Diff ของ Codex เต็มจอ
-  * **`[DeepSeek R1 Only]`**: ดูเฉพาะกระบวนการคิด Chain of Thought (กล่องสีม่วงพับเก็บได้) และคำตอบของ DeepSeek เต็มจอ
-* **Server-Side Rendering (SSR):**
-  * หน้าเว็บโหลดประวัติและสถานะจากเซิร์ฟเวอร์มาใน HTML ทันที ไม่ต้องรอ client-side fetch
-
----
-
-## 7. คำสั่งจัดการและ Systemd Service
-
+### 2. การจัดการ Service บน Proxmox Container:
 ```bash
-# Restart Web Dashboard
-systemctl restart agent-web
+# ตรวจสอบสถานะ Web Dashboard
+systemctl status agent-web.service
 
-# ดูสถานะและ Log แบบ Real-time
-systemctl status agent-web
-journalctl -u agent-web -f -n 50
+# รีสตาร์ทเซอร์วิสเมื่ออัปเดตโค้ด
+systemctl restart agent-web.service
 
-# ดูประวัติ Task ในระบบ
-cat /opt/agent-bridge/tasks_history.json | jq '.[0]'
+# รีบิลด์ SvelteKit Dashboard
+cd /opt/agent-bridge/dashboard
+npm run build
 ```
+
+---
+
+## 📝 บันทึกประวัติการพัฒนา (Changelog)
+
+* **v2.2.0 (ล่าสุด):**
+  * เพิ่มระบบ **Task Intent Detection** แยกประเภทงาน `💻 Code Task` vs `💡 General / Planning` อัตโนมัติ ป้องกันปัญหา Codex ค้นหาไฟล์วนลูปจน Timeout
+  * ติดตั้ง **Global Anti-Hallucination Rules** บังคับใช้ทุกห้องแชท ป้องกันการจำลองคำตอบของโมเดลอื่น
+  * แก้ไขปัญหา **Auto-select บน F5** หน้าเว็บเปิดมาด้วยสถานะ Clean State เสมอ
+* **v2.1.0:**
+  * แยกโค้ดหน้าเว็บเป็น **11 Modular Components** บน SvelteKit 5 Runes
+  * เพิ่มระบบ **Auto Temp Workspace** พร้อมการตั้งชื่อ Slugify ภาษาไทย/อังกฤษ
+  * เพิ่มระบบ **Safe Trash** ลบ Workspace รายตัวและล้าง Temp แบบแยกส่วน
+* **v2.0.0:**
+  * เปิดตัว **Dual Comparison Engine** รัน OpenAI Codex CLI คู่กับ DeepSeek R1 KMITL GPU
+  * รองรับ MCP Protocol over SSH
