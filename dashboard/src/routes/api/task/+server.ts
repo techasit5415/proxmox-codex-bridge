@@ -204,16 +204,42 @@ Do not output git diff markers directly, just output the complete file contents 
 	};
 }
 
+function slugifyPrompt(prompt: string): string {
+	const clean = (prompt || '')
+		.trim()
+		.toLowerCase()
+		.replace(/[^\p{L}\p{M}\p{N}]+/gu, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 35);
+	const id = Math.random().toString(36).substring(2, 6);
+	return `temp-${clean || 'scratch'}-${id}`;
+}
+
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const { workspace, prompt, branch, provider = 'codex' } = await request.json();
-		if (!workspace || !prompt) {
-			return json({ error: 'workspace and prompt required' }, { status: 400 });
+		if (!prompt?.trim()) {
+			return json({ error: 'prompt is required' }, { status: 400 });
 		}
 
-		const target = path.join(WORKSPACES_DIR, workspace);
+		let activeWorkspace = workspace?.trim();
+		if (!activeWorkspace || activeWorkspace === 'auto-temp' || activeWorkspace === 'temp') {
+			activeWorkspace = slugifyPrompt(prompt);
+			const tempTarget = path.join(WORKSPACES_DIR, activeWorkspace);
+			if (!fs.existsSync(tempTarget)) {
+				fs.mkdirSync(tempTarget, { recursive: true });
+				const cleanTitle = prompt.replace(/[\r\n]+/g, ' ').slice(0, 100);
+				const readme = `# ${cleanTitle}\n\nAutomated scratch workspace created for prompt:\n> ${prompt}\n`;
+				fs.writeFileSync(path.join(tempTarget, 'README.md'), readme, 'utf8');
+				try {
+					await execAsync('git init && git add README.md && git commit -m "init: automated scratch workspace"', { cwd: tempTarget });
+				} catch (e) {}
+			}
+		}
+
+		const target = path.join(WORKSPACES_DIR, activeWorkspace);
 		if (!fs.existsSync(target)) {
-			return json({ error: 'Workspace not found' }, { status: 404 });
+			return json({ error: `Workspace '${activeWorkspace}' not found` }, { status: 404 });
 		}
 
 		const timestamp = Date.now();
@@ -222,7 +248,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			const taskBranch = branch?.trim() || `agent/deepseek-${timestamp}`;
 			const result = await runDeepSeekTask(target, prompt, taskBranch);
 			saveTaskToHistory({
-				workspace,
+				workspace: activeWorkspace,
 				prompt,
 				provider: result.provider,
 				branch: result.branch,
@@ -232,7 +258,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				tokens: result.tokens,
 				mode: 'single'
 			});
-			return json({ success: true, mode: 'single', ...result });
+			return json({ success: true, workspace: activeWorkspace, mode: 'single', ...result });
 		}
 
 		if (provider === 'both') {
@@ -252,7 +278,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			const deepseekRes = await deepseekPromise;
 
 			saveTaskToHistory({
-				workspace,
+				workspace: activeWorkspace,
 				prompt,
 				provider: 'Dual Agents (Codex + DeepSeek)',
 				branch: `${codexBranch} & ${deepseekBranch}`,
@@ -272,6 +298,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 			return json({
 				success: true,
+				workspace: activeWorkspace,
 				mode: 'both',
 				codex: codexRes,
 				deepseek: deepseekRes
@@ -282,7 +309,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		const taskBranch = branch?.trim() || `agent/codex-${timestamp}`;
 		const result = await runCodexTask(target, prompt, taskBranch);
 		saveTaskToHistory({
-			workspace,
+			workspace: activeWorkspace,
 			prompt,
 			provider: result.provider,
 			branch: result.branch,
@@ -292,7 +319,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			tokens: result.tokens,
 			mode: 'single'
 		});
-		return json({ success: true, mode: 'single', ...result });
+		return json({ success: true, workspace: activeWorkspace, mode: 'single', ...result });
 	} catch (err: any) {
 		return json({ error: err.message }, { status: 500 });
 	}

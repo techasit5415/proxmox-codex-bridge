@@ -306,6 +306,34 @@ async function executeCodex(target, prompt, branchName) {
   };
 }
 
+function slugifyPrompt(prompt) {
+  let clean = (prompt || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 35);
+  const id = Math.random().toString(36).substring(2, 6);
+  return 'temp-' + (clean || 'scratch') + '-' + id;
+}
+
+async function resolveWorkspace(wsName, prompt) {
+  let finalName = wsName?.trim();
+  if (!finalName || finalName === 'auto-temp' || finalName === 'temp') {
+    finalName = slugifyPrompt(prompt);
+  }
+  const target = path.join(WORKSPACES_DIR, finalName);
+  if (!fs.existsSync(target)) {
+    fs.mkdirSync(target, { recursive: true });
+    const cleanTitle = (prompt || 'Scratch').replace(/[\r\n]+/g, ' ').slice(0, 100);
+    fs.writeFileSync(path.join(target, 'README.md'), `# ${cleanTitle}\n\nAutomated scratch workspace.\n`, 'utf8');
+    try {
+      await execAsync('git init && git add README.md && git commit -m "init: automated scratch workspace"', { cwd: target });
+    } catch (e) {}
+  }
+  return { finalName, target };
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
@@ -335,11 +363,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === 'run_codex_task') {
-      const target = path.join(WORKSPACES_DIR, args.workspace);
+      const { finalName, target } = await resolveWorkspace(args.workspace, args.prompt);
       const b = args.branch || `agent/codex-${Date.now()}`;
       const r = await executeCodex(target, args.prompt, b);
       recordTaskHistory({
-        workspace: args.workspace,
+        workspace: finalName,
         prompt: args.prompt,
         provider: 'Codex (gpt-6.1-sol)',
         branch: r.branch,
@@ -350,16 +378,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         mode: 'single'
       });
       return {
-        content: [{ type: 'text', text: `[Codex Completed]\nBranch: ${r.branch}\n\n=== DIFF ===\n${r.diff}\n\n=== LOGS ===\n${r.logs}` }]
+        content: [{ type: 'text', text: `[Codex Completed]\nWorkspace: ${finalName}\nBranch: ${r.branch}\n\n=== DIFF ===\n${r.diff}\n\n=== LOGS ===\n${r.logs}` }]
       };
     }
 
     if (name === 'run_deepseek_task') {
-      const target = path.join(WORKSPACES_DIR, args.workspace);
+      const { finalName, target } = await resolveWorkspace(args.workspace, args.prompt);
       const b = args.branch || `agent/deepseek-${Date.now()}`;
       const r = await executeDeepSeek(target, args.prompt, b);
       recordTaskHistory({
-        workspace: args.workspace,
+        workspace: finalName,
         prompt: args.prompt,
         provider: 'DeepSeek R1 (14b GPU)',
         branch: r.branch,
@@ -370,12 +398,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         mode: 'single'
       });
       return {
-        content: [{ type: 'text', text: `[DeepSeek R1 Completed]\nBranch: ${r.branch}\n\n=== DIFF ===\n${r.diff}\n\n=== LOGS ===\n${r.logs}` }]
+        content: [{ type: 'text', text: `[DeepSeek R1 Completed]\nWorkspace: ${finalName}\nBranch: ${r.branch}\n\n=== DIFF ===\n${r.diff}\n\n=== LOGS ===\n${r.logs}` }]
       };
     }
 
     if (name === 'run_dual_task') {
-      const target = path.join(WORKSPACES_DIR, args.workspace);
+      const { finalName, target } = await resolveWorkspace(args.workspace, args.prompt);
       const ts = Date.now();
       // Start DeepSeek network query concurrently with Codex CLI (with error boundary)
       const deepseekPromise = executeDeepSeek(target, args.prompt, `agent/deepseek-${ts}`).catch(err => ({
@@ -389,7 +417,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const deepseekRes = await deepseekPromise;
 
       recordTaskHistory({
-        workspace: args.workspace,
+        workspace: finalName,
         prompt: args.prompt,
         provider: 'Dual Agents (Codex + DeepSeek)',
         branch: `${codexRes.branch} & ${deepseekRes.branch}`,
@@ -410,7 +438,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return {
         content: [{
           type: 'text',
-          text: `[Dual Task Comparison]\n\n=== 1. CODEX (gpt-6.1-sol) Branch: ${codexRes.branch} ===\n${codexRes.diff}\n\n=== 2. DEEPSEEK R1 (14b GPU) Branch: ${deepseekRes.branch} ===\n${deepseekRes.diff}`
+          text: `[Dual Task Comparison]\nWorkspace: ${finalName}\n\n=== 1. CODEX (gpt-6.1-sol) Branch: ${codexRes.branch} ===\n${codexRes.diff}\n\n=== 2. DEEPSEEK R1 (14b GPU) Branch: ${deepseekRes.branch} ===\n${deepseekRes.diff}`
         }]
       };
     }

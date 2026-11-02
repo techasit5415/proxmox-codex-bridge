@@ -28,6 +28,22 @@
 		</div>
 
 		<div class="flex flex-col gap-1">
+			<!-- Auto Temp Option -->
+			<button 
+				onclick={() => onSelectWorkspace('auto-temp')}
+				class="w-full text-left px-2.5 py-1.5 rounded text-xs font-mono transition flex items-center justify-between cursor-pointer {activeWs === 'auto-temp' ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30 font-semibold' : 'text-amber-400/80 hover:bg-zinc-800/40 hover:text-amber-300'}"
+			>
+				<span class="truncate flex items-center gap-1.5">
+					<span class="text-amber-400">✨</span>
+					<span>Auto Temp (สร้างตามคำถาม)</span>
+				</span>
+				{#if activeWs === 'auto-temp'}
+					<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+				{/if}
+			</button>
+
+			<div class="my-0.5 border-t border-zinc-800/60"></div>
+
 			{#each workspaces as ws}
 				<button 
 					onclick={() => onSelectWorkspace(ws)}
@@ -45,7 +61,16 @@
 	</div>
 
 	<!-- Active Repo Status -->
-	{#if wsDetails}
+	{#if activeWs === 'auto-temp'}
+		<div class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3.5 flex flex-col gap-2 text-xs">
+			<div class="flex items-center gap-1.5 text-amber-300 font-semibold font-mono">
+				<span>✨ Auto Temp Mode</span>
+			</div>
+			<div class="text-[11px] text-zinc-400 leading-relaxed font-sans">
+				ระบบจะสร้าง Workspace ใหม่ให้ทันที โดยตั้งชื่อโฟลเดอร์ตามคำถามที่พิมพ์
+			</div>
+		</div>
+	{:else if wsDetails}
 		<div class="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3.5 flex flex-col gap-2 text-xs">
 			<div class="flex items-center justify-between font-mono">
 				<div class="flex items-center gap-1.5 text-zinc-300">

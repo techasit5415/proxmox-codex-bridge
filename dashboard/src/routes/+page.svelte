@@ -239,6 +239,11 @@
 				taskBadge = 'Completed';
 				taskBadgeType = 'success';
 				
+				if (d.workspace && d.workspace !== activeWs) {
+					activeWs = d.workspace;
+					await fetchWorkspaces();
+				}
+
 				if (d.mode === 'both') {
 					dualCodex = d.codex;
 					dualDeepSeek = d.deepseek;
@@ -309,7 +314,7 @@
 		}
 	}
 
-	onMount(async () => {
+	onMount(() => {
 		if (data.workspaces && data.workspaces.length > 0) {
 			workspaces = data.workspaces;
 			if (!workspaces.includes(activeWs)) activeWs = data.workspaces[0];
@@ -321,9 +326,12 @@
 
 		fetchStatus();
 		fetchWorkspaces();
-		if (activeWs) fetchWorkspaceDetails(activeWs);
+		if (activeWs && activeWs !== 'auto-temp') fetchWorkspaceDetails(activeWs);
 
-		const statusInterval = setInterval(fetchStatus, 5000);
+		const statusInterval = setInterval(() => {
+			fetchStatus();
+		}, 5000);
+
 		const historyInterval = setInterval(async () => {
 			if (!isExecuting) {
 				try {

@@ -67,6 +67,17 @@ export function fmtTokens(n: number | undefined | null): string {
 	return n.toLocaleString();
 }
 
+export function slugifyPrompt(prompt: string): string {
+	const clean = (prompt || '')
+		.trim()
+		.toLowerCase()
+		.replace(/[^\p{L}\p{M}\p{N}]+/gu, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 35);
+	const id = Math.random().toString(36).substring(2, 6);
+	return `temp-${clean || 'scratch'}-${id}`;
+}
+
 export function extractThoughtAndBody(raw: string): { thoughts: string; body: string } {
 	if (!raw) return { thoughts: '', body: '' };
 
