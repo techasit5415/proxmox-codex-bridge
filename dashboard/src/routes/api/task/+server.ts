@@ -64,6 +64,16 @@ interface WorktreeContext {
 	baseCommit: string;
 }
 
+function sanitizeForApi(text: string, maxChars = 4000): string {
+	if (!text) return '';
+	let clean = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+	                .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F]/g, '');
+	if (clean.length > maxChars) {
+		clean = clean.slice(0, maxChars) + '\n...[truncated for token limit]';
+	}
+	return clean;
+}
+
 async function prepareWorktree(repoDir: string, branchName: string, prefix: string): Promise<WorktreeContext> {
 	try {
 		await execAsync('git rev-parse HEAD', { cwd: repoDir });
@@ -458,7 +468,7 @@ You are a Principal Software Architect & Auditor conducting a peer review of a s
 ${prompt}
 
 === CODEX'S PROPOSAL & OUTPUT ===
-${codexProp.logs.slice(0, 10000)}
+${sanitizeForApi(codexProp.logs, 4000)}
 
 === CODEX'S GIT DIFF ===
 ${codexProp.diff || '(No diff recorded)'}
@@ -475,7 +485,7 @@ You are a Principal Software Architect & Auditor conducting a peer review of a s
 ${prompt}
 
 === DEEPSEEK R1 PROPOSAL & OUTPUT ===
-${deepseekProp.logs.slice(0, 10000)}
+${sanitizeForApi(deepseekProp.logs, 6000)}
 
 === DEEPSEEK R1 GIT DIFF ===
 ${deepseekProp.diff || '(No diff recorded)'}
@@ -502,7 +512,11 @@ Please provide your rigorous peer review in Thai (and English for technical term
 						stream: false
 					})
 				});
-				if (!res.ok) return `DeepSeek Review failed: ${res.statusText}`;
+				if (!res.ok) {
+					const errText = await res.text().catch(() => '');
+					console.error(`[DeepSeek Review Error] HTTP ${res.status} ${res.statusText}: ${errText}`);
+					return `DeepSeek Review failed (${res.status} ${res.statusText}): ${errText || 'Empty error body'}`;
+				}
 				const data = await res.json();
 				const msg = data.message?.content || data.choices?.[0]?.message?.content || '';
 				const think = data.message?.thinking ? `<think>\n${data.message.thinking}\n</think>\n\n` : '';
