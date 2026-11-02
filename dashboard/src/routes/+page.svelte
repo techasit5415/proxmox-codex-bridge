@@ -14,8 +14,18 @@
 		RefreshCw, 
 		ExternalLink, 
 		Copy, 
-		Check 
+		Check,
+		Zap,
+		Coins,
+		Database
 	} from 'lucide-svelte';
+
+	interface TokenUsage {
+		total_tokens: number;
+		input_tokens: number;
+		cached_input_tokens: number;
+		output_tokens: number;
+	}
 
 	interface SystemStatus {
 		status: string;
@@ -24,6 +34,7 @@
 		memoryUsage: string;
 		nodeVersion: string;
 		codexVersion: string;
+		tokens?: TokenUsage;
 	}
 
 	interface WorkspaceDetails {
@@ -37,7 +48,7 @@
 	// State (Svelte 5 Runes)
 	let status = $state<SystemStatus | null>(null);
 	let workspaces = $state<string[]>([]);
-	let activeWs = $state<string>('demo-project');
+	let activeWs = $state<string>('Android-Tv');
 	let wsDetails = $state<WorkspaceDetails | null>(null);
 
 	let prompt = $state<string>('');
@@ -49,6 +60,14 @@
 	let diffResult = $state<string>('// Git diff will appear here after task execution...');
 	let logsResult = $state<string>('// Agent reasoning logs and test runner stdout will appear here...');
 	let activeTab = $state<'diff' | 'logs' | 'files'>('diff');
+
+	// Tokens state
+	let currentTokens = $state<TokenUsage>({
+		total_tokens: 29648,
+		input_tokens: 29525,
+		cached_input_tokens: 24576,
+		output_tokens: 123
+	});
 
 	// Clone Modal
 	let showCloneModal = $state<boolean>(false);
@@ -64,7 +83,12 @@
 	async function fetchStatus() {
 		try {
 			const res = await fetch('/api/status');
-			if (res.ok) status = await res.json();
+			if (res.ok) {
+				status = await res.json();
+				if (status?.tokens && status.tokens.total_tokens > 0) {
+					currentTokens = status.tokens;
+				}
+			}
 		} catch (e) {
 			console.error(e);
 		}
@@ -119,6 +143,9 @@
 				taskBadgeType = 'success';
 				diffResult = data.diff;
 				logsResult = data.logs;
+				if (data.tokens && data.tokens.total_tokens > 0) {
+					currentTokens = data.tokens;
+				}
 				activeTab = 'diff';
 				fetchWorkspaceDetails(activeWs);
 			} else {
@@ -134,6 +161,7 @@
 			activeTab = 'logs';
 		} finally {
 			isExecuting = false;
+			fetchStatus();
 		}
 	}
 
@@ -190,10 +218,14 @@
 		setTimeout(() => (copied = false), 2000);
 	}
 
+	function formatNumber(num: number): string {
+		return num.toLocaleString();
+	}
+
 	onMount(() => {
 		fetchStatus();
 		fetchWorkspaces();
-		const interval = setInterval(fetchStatus, 10000);
+		const interval = setInterval(fetchStatus, 8000);
 		return () => clearInterval(interval);
 	});
 </script>
@@ -218,6 +250,12 @@
 
 	<!-- System Badges -->
 	<div class="flex items-center gap-3 text-xs font-mono">
+		<!-- Token Counter Badge in Header -->
+		<div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 font-semibold shadow-sm">
+			<Zap class="w-3.5 h-3.5 text-amber-400 fill-amber-400/30" />
+			<span>Tokens: <strong>{formatNumber(currentTokens.total_tokens)}</strong></span>
+		</div>
+
 		<div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300">
 			<CheckCircle2 class="w-3.5 h-3.5 text-emerald-400" />
 			<span>{status?.codexAuth || 'Checking...'}</span>
@@ -379,8 +417,58 @@
 			</div>
 		</div>
 
+		<!-- Live Token Usage Stat Grid (shadcn Metric Cards) -->
+		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
+				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
+					<Coins class="w-3.5 h-3.5 text-amber-400" />
+					<span>Total Tokens</span>
+				</div>
+				<div class="text-lg font-bold font-mono text-zinc-100">
+					{formatNumber(currentTokens.total_tokens)}
+				</div>
+				<div class="text-[10px] text-zinc-500">All turns combined</div>
+			</div>
+
+			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
+				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
+					<Database class="w-3.5 h-3.5 text-emerald-400" />
+					<span>Cached Tokens</span>
+				</div>
+				<div class="text-lg font-bold font-mono text-emerald-400 flex items-center gap-1.5">
+					<span>{formatNumber(currentTokens.cached_input_tokens)}</span>
+					<span class="text-[10px] font-sans px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+						{Math.round((currentTokens.cached_input_tokens / (currentTokens.input_tokens || 1)) * 100)}%
+					</span>
+				</div>
+				<div class="text-[10px] text-zinc-500">Fast cache hit</div>
+			</div>
+
+			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
+				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
+					<FileCode class="w-3.5 h-3.5 text-indigo-400" />
+					<span>Output Tokens</span>
+				</div>
+				<div class="text-lg font-bold font-mono text-indigo-400">
+					{formatNumber(currentTokens.output_tokens)}
+				</div>
+				<div class="text-[10px] text-zinc-500">Code produced</div>
+			</div>
+
+			<div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/40 flex flex-col gap-1">
+				<div class="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
+					<Zap class="w-3.5 h-3.5 text-violet-400" />
+					<span>Context Window</span>
+				</div>
+				<div class="text-lg font-bold font-mono text-zinc-200">
+					475,000
+				</div>
+				<div class="text-[10px] text-zinc-500">Max limit per task</div>
+			</div>
+		</div>
+
 		<!-- Results Viewer Tabs (shadcn Tabs) -->
-		<div class="rounded-xl border border-zinc-800 bg-zinc-900/50 flex-1 flex flex-col overflow-hidden shadow-xl min-h-[460px]">
+		<div class="rounded-xl border border-zinc-800 bg-zinc-900/50 flex-1 flex flex-col overflow-hidden shadow-xl min-h-[420px]">
 			<!-- Tab Navigation -->
 			<div class="flex items-center justify-between border-b border-zinc-800 px-4 bg-zinc-950/60">
 				<div class="flex items-center space-x-1">
