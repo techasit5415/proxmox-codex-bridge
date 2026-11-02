@@ -8,9 +8,12 @@ import fs from 'fs';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
+const KMITL_API_URL = 'https://aipass.cskmitl.com/v1/chat/completions';
+const KMITL_TOKEN = 'gpu_910c7fbfed984909803659c2885e0d320746a068';
+const DEEPSEEK_MODEL = 'deepseek-r1:14b';
 
 const server = new Server(
-  { name: 'proxmox-codex-bridge', version: '1.0.0' },
+  { name: 'proxmox-agent-bridge', version: '2.0.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -47,13 +50,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'run_codex_task',
-        description: 'สั่งให้ OpenAI Codex CLI แก้ไขโค้ดใน workspace แบบอัตโนมัติ พร้อมส่ง Git diff และ Logs กลับมา',
+        description: 'สั่งให้ OpenAI Codex CLI (ChatGPT Plus: gpt-6.1-sol) แก้ไขโค้ดใน workspace แบบอัตโนมัติ',
         inputSchema: {
           type: 'object',
           properties: {
-            workspace: { type: 'string', description: 'ชื่อโฟลเดอร์โปรเจกต์ใน workspaces' },
+            workspace: { type: 'string', description: 'ชื่อโฟลเดอร์โปรเจกต์' },
             prompt: { type: 'string', description: 'คำสั่งงานเขียนโค้ดสำหรับ Codex' },
             branch: { type: 'string', description: 'ชื่อ branch ใหม่ (ถ้าไม่ระบุจะสร้างให้อัตโนมัติ)' }
+          },
+          required: ['workspace', 'prompt']
+        }
+      },
+      {
+        name: 'run_deepseek_task',
+        description: 'สั่งให้ DeepSeek R1 (14b KMITL GPU) แก้ไขโค้ดใน workspace แบบอัตโนมัติ',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'ชื่อโฟลเดอร์โปรเจกต์' },
+            prompt: { type: 'string', description: 'คำสั่งงานเขียนโค้ดสำหรับ DeepSeek R1' },
+            branch: { type: 'string', description: 'ชื่อ branch ใหม่' }
+          },
+          required: ['workspace', 'prompt']
+        }
+      },
+      {
+        name: 'run_dual_task',
+        description: 'สั่งทั้ง Codex (gpt-6.1-sol) และ DeepSeek R1 (14b GPU) ทำงานพร้อมกันบนคนละ branch เพื่อเปรียบเทียบ diff',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'ชื่อโฟลเดอร์โปรเจกต์' },
+            prompt: { type: 'string', description: 'คำสั่งงาน' }
           },
           required: ['workspace', 'prompt']
         }
@@ -74,30 +102,104 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+async function executeDeepSeek(target, prompt, branchName) {
+  try {
+    await execAsync(`git checkout -b ${branchName}`, { cwd: target });
+  } catch (e) {}
+
+  const { stdout: fileList } = await execAsync('git ls-files | head -n 40', { cwd: target });
+
+  const systemPrompt = `You are an expert software engineer. Given a user task and workspace files, generate the necessary code changes.
+Format your response using this syntax:
+
+file:path/to/file.ext
+\`\`\`language
+<complete file content here>
+\`\`\`
+`;
+
+  const res = await fetch(KMITL_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${KMITL_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: DEEPSEEK_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Workspace files:\n${fileList}\n\nTask:\n${prompt}` }
+      ],
+      stream: false
+    })
+  });
+
+  const data = await res.json();
+  const reply = data.choices[0]?.message?.content || '';
+
+  let modifiedFiles = 0;
+  const regex = /(?:file:([^\n\r]+)[\r\n]+)?```[a-zA-Z0-9_\-]*[\r\n]+([\s\S]*?)```/g;
+  let match;
+  while ((match = regex.exec(reply)) !== null) {
+    let filePath = match[1]?.trim();
+    const fileContent = match[2];
+    if (filePath) {
+      const absPath = path.join(target, filePath);
+      fs.mkdirSync(path.dirname(absPath), { recursive: true });
+      fs.writeFileSync(absPath, fileContent, 'utf8');
+      modifiedFiles++;
+    }
+  }
+
+  const { stdout: diff } = await execAsync('git diff', { cwd: target });
+  const { stdout: status } = await execAsync('git status -s', { cwd: target });
+
+  return {
+    branch: branchName,
+    diff: diff.trim() || `(${modifiedFiles} files created/modified)`,
+    status: status.trim() || 'Clean',
+    logs: reply.trim()
+  };
+}
+
+async function executeCodex(target, prompt, branchName) {
+  try {
+    await execAsync(`git checkout -b ${branchName}`, { cwd: target });
+  } catch (e) {}
+
+  const escapedPrompt = prompt.replace(/"/g, '\\"');
+  const codexCmd = `codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" "${escapedPrompt}" </dev/null`;
+
+  const { stdout, stderr } = await execAsync(codexCmd, { timeout: 15 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 });
+  const { stdout: diff } = await execAsync('git diff', { cwd: target });
+  const { stdout: status } = await execAsync('git status -s', { cwd: target });
+
+  return {
+    branch: branchName,
+    diff: diff.trim() || '(No tracked files modified)',
+    status: status.trim() || 'Clean',
+    logs: (stdout + '\n' + stderr).trim()
+  };
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
     if (name === 'list_workspaces') {
-      if (!fs.existsSync(WORKSPACES_DIR)) {
-        fs.mkdirSync(WORKSPACES_DIR, { recursive: true });
-      }
+      if (!fs.existsSync(WORKSPACES_DIR)) fs.mkdirSync(WORKSPACES_DIR, { recursive: true });
       const files = fs.readdirSync(WORKSPACES_DIR);
-      return {
-        content: [{ type: 'text', text: files.length > 0 ? files.join('\n') : '(Workspaces directory is currently empty)' }]
-      };
+      return { content: [{ type: 'text', text: files.length > 0 ? files.join('\n') : '(empty)' }] };
     }
 
     if (name === 'inspect_workspace') {
       const target = path.join(WORKSPACES_DIR, args.workspace);
-      if (!fs.existsSync(target)) {
-        return { content: [{ type: 'text', text: `Error: Workspace '${args.workspace}' does not exist.` }], isError: true };
-      }
-      const { stdout: branch } = await execAsync('git branch --show-current 2>/dev/null || echo "not a git repo"', { cwd: target });
+      if (!fs.existsSync(target)) return { content: [{ type: 'text', text: `Workspace not found` }], isError: true };
+      const { stdout: branch } = await execAsync('git branch --show-current 2>/dev/null || echo "none"', { cwd: target });
       const { stdout: status } = await execAsync('git status -s 2>/dev/null || echo ""', { cwd: target });
       const { stdout: files } = await execAsync('ls -la', { cwd: target });
       return {
-        content: [{ type: 'text', text: `Workspace: ${args.workspace}\nBranch: ${branch.trim()}\n\nGit Status:\n${status || '(clean)'}\n\nFiles:\n${files}` }]
+        content: [{ type: 'text', text: `Branch: ${branch.trim()}\nStatus:\n${status || '(clean)'}\n\nFiles:\n${files}` }]
       };
     }
 
@@ -105,55 +207,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const folder = args.folderName ? args.folderName.trim() : '';
       const cmd = `git clone ${args.repoUrl} ${folder}`;
       const { stdout, stderr } = await execAsync(cmd, { cwd: WORKSPACES_DIR });
-      return {
-        content: [{ type: 'text', text: `Repository cloned successfully!\n${stdout}\n${stderr}` }]
-      };
+      return { content: [{ type: 'text', text: `Cloned successfully!\n${stdout}\n${stderr}` }] };
     }
 
     if (name === 'run_codex_task') {
       const target = path.join(WORKSPACES_DIR, args.workspace);
-      if (!fs.existsSync(target)) {
-        return { content: [{ type: 'text', text: `Workspace '${args.workspace}' not found.` }], isError: true };
-      }
+      const b = args.branch || `agent/codex-${Date.now()}`;
+      const r = await executeCodex(target, args.prompt, b);
+      return {
+        content: [{ type: 'text', text: `[Codex Completed]\nBranch: ${r.branch}\n\n=== DIFF ===\n${r.diff}\n\n=== LOGS ===\n${r.logs}` }]
+      };
+    }
 
-      const taskBranch = args.branch || `agent/task-${Date.now()}`;
-      try {
-        await execAsync(`git checkout -b ${taskBranch}`, { cwd: target });
-      } catch (e) {}
+    if (name === 'run_deepseek_task') {
+      const target = path.join(WORKSPACES_DIR, args.workspace);
+      const b = args.branch || `agent/deepseek-${Date.now()}`;
+      const r = await executeDeepSeek(target, args.prompt, b);
+      return {
+        content: [{ type: 'text', text: `[DeepSeek R1 Completed]\nBranch: ${r.branch}\n\n=== DIFF ===\n${r.diff}\n\n=== LOGS ===\n${r.logs}` }]
+      };
+    }
 
-      // สั่ง Codex CLI exec ใน workspace โดย redirect </dev/null
-      const escapedPrompt = args.prompt.replace(/"/g, '\\"');
-      const codexCmd = `codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" "${escapedPrompt}" </dev/null`;
-
-      const { stdout, stderr } = await execAsync(codexCmd, { timeout: 15 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 });
-      const { stdout: diff } = await execAsync('git diff', { cwd: target });
-      const { stdout: status } = await execAsync('git status -s', { cwd: target });
+    if (name === 'run_dual_task') {
+      const target = path.join(WORKSPACES_DIR, args.workspace);
+      const ts = Date.now();
+      const codexRes = await executeCodex(target, args.prompt, `agent/codex-${ts}`);
+      const deepseekRes = await executeDeepSeek(target, args.prompt, `agent/deepseek-${ts}`);
 
       return {
         content: [{
           type: 'text',
-          text: `[Codex Task Completed]\nBranch: ${taskBranch}\n\n=== STATUS ===\n${status}\n\n=== DIFF ===\n${diff || '(No diff or files are untracked)'}\n\n=== LOGS ===\n${stdout}\n${stderr}`
+          text: `[Dual Task Comparison]\n\n=== 1. CODEX (gpt-6.1-sol) Branch: ${codexRes.branch} ===\n${codexRes.diff}\n\n=== 2. DEEPSEEK R1 (14b GPU) Branch: ${deepseekRes.branch} ===\n${deepseekRes.diff}`
         }]
       };
     }
 
     if (name === 'run_command') {
       const target = path.join(WORKSPACES_DIR, args.workspace);
-      if (!fs.existsSync(target)) {
-        return { content: [{ type: 'text', text: `Workspace '${args.workspace}' not found.` }], isError: true };
-      }
-      const { stdout, stderr } = await execAsync(args.command, { cwd: target, timeout: 5 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 });
-      return {
-        content: [{ type: 'text', text: stdout + (stderr ? `\n[stderr]: ${stderr}` : '') }]
-      };
+      const { stdout, stderr } = await execAsync(args.command, { cwd: target, timeout: 5 * 60 * 1000 });
+      return { content: [{ type: 'text', text: stdout + (stderr ? `\n[stderr]: ${stderr}` : '') }] };
     }
 
     throw new Error(`Unknown tool: ${name}`);
   } catch (err) {
-    return {
-      content: [{ type: 'text', text: `[Error]: ${err.message}` }],
-      isError: true
-    };
+    return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true };
   }
 });
 
