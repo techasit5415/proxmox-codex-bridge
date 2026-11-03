@@ -1,6 +1,6 @@
 # 🌉 Proxmox Codex Bridge & Multi-Agent Platform
 
-ระบบเชื่อมต่อและบริดจ์คำสั่งอัจฉริยะ (Multi-Agent Bridge) ที่ผสานการทำงานระหว่าง **Google Antigravity**, **OpenAI Codex (gpt-6.1-sol)** บน Proxmox LXC Container และ **DeepSeek R1 (14b GPU)** บน CS KMITL GPU Cluster พร้อม Web Dashboard ควบคุมแบบ Real-time และระบบเปรียบเทียบผลลัพธ์แบบ Dual Comparison
+ระบบเชื่อมต่อและบริดจ์คำสั่งอัจฉริยะ (Multi-Agent Bridge) ที่ผสานการทำงานระหว่าง **Google Antigravity**, **OpenAI Codex (gpt-6.1-sol)** บน Proxmox LXC Container และ **DeepSeek R1 (14b GPU)** บน CS KMITL GPU Cluster พร้อม **Redis 7 Job Queue & Worker**, ระบบสตรีมมิ่งสด **Server-Sent Events (SSE)**, **Automated Evidence Test Gate**, และ Web Dashboard ควบคุมแบบ Real-time บน Svelte 5
 
 🌐 **Web Dashboard:** [http://192.168.5.159:3000](http://192.168.5.159:3000) (เข้าถึงผ่านเครือข่ายภายใน)
 
@@ -15,6 +15,9 @@
 - [4. 🛡️ กฎเหล็ก Anti-Hallucination & Multi-Agent Strict Policy](#4-️-กฎเหล็ก-anti-hallucination--multi-agent-strict-policy)
 - [5. 🌲 Dual Compare View & Git Worktree Isolation](#5--dual-compare-view--git-worktree-isolation)
 - [6. 🤝 Multi-Agent Consensus Loop (Bilateral Peer Review)](#6--multi-agent-consensus-loop-bilateral-peer-review)
+- [7. ⚡ Redis 7 Job Queue, Worker & Safe Workspace Lease](#7--redis-7-job-queue-worker--safe-workspace-lease)
+- [8. 🛡️ Automated Evidence Test Gate (Evidence-Based Testing)](#8-️-automated-evidence-test-gate-evidence-based-testing)
+- [9. 📡 Real-time SSE Streaming & Report Export](#9--real-time-sse-streaming--report-export)
 - [🛠️ การติดตั้งและการเชื่อมต่อ (Setup & Deployment)](#️-การติดตั้งและการเชื่อมต่อ-setup--deployment)
 - [⚡ การใช้งาน Permanent CLI Runner (scripts/ask_models.py)](#-การใช้งาน-permanent-cli-runner-scriptsask_modelspy)
 - [📦 คู่มือการย้ายเครื่อง (Migration Guide)](#-คู่มือการย้ายเครื่อง-migration-guide)
@@ -27,24 +30,31 @@
 
 ```mermaid
 flowchart TD
-    User["👨‍💻 ผู้ใช้งาน / พัฒนา"] -->|Prompt & Commands| Antigravity["🛸 Antigravity (Coding Agent)"]
-    User -->|Direct Web UI| Dashboard["🌐 Web Dashboard (Port 3000)\nSvelte 5 + SvelteKit + Tailwind"]
+    User["👨‍💻 ผู้ใช้งาน / นักพัฒนา"] -->|CLI / Prompt| Antigravity["🛸 Antigravity (Coding Agent)"]
+    User -->|Direct Web UI| Dashboard["🌐 Web Dashboard (Port 3000)\nSvelte 5 + SvelteKit + Tailwind v4"]
     
     subgraph Antigravity_Config["Local Agent Customizations"]
         GlobalRules["📜 Global Rules (~/.gemini/config/rules/)\n- Strict Anti-Hallucination\n- Auto Tool Routing"]
-        MCPConfig["⚙️ mcp_config.json\nproxmox-agent (SSH StdIO)"]
+        CLIHelper["⚡ Permanent CLI Runner\n(ask_models.py with SSE & Queue)"]
     end
     Antigravity --- Antigravity_Config
     
-    Antigravity -->|MCP over SSH| CT["🖥️ Proxmox CT (192.168.5.159)"]
-    Dashboard -->|REST API| Backend["⚡ Server Backend (server.mjs / +server.ts)"]
-    Backend --- CT
-
-    subgraph Proxmox_CT["Proxmox LXC Container"]
+    Dashboard -->|POST /api/task (202 Accepted)| Backend["⚡ SvelteKit Backend Server"]
+    CLIHelper -->|POST /api/task (202 Accepted)| Backend
+    
+    subgraph Proxmox_CT["Proxmox LXC Container (192.168.5.159)"]
         Backend
-        Intent["🎯 Task Intent Classifier\n(💻 Code vs 💡 General/Planning)"]
+        
+        subgraph Redis_Layer["Redis 7 Infrastructure"]
+            RedisQueue[("📥 tasks:queue\n(FIFO Task Queue)")]
+            RedisPubSub[("📡 task:events:id\n(PubSub Real-time SSE)")]
+            RedisLease[("🔒 workspace:lease\n(Concurrency Guard)")]
+        end
+        
+        Worker["⚙️ Background Task Worker Loop"]
+        TestGate["🛡️ Automated Evidence Test Gate\n(npm test / pytest / syntax check)"]
         Workspaces["📁 Workspaces & Auto-Temp (/opt/agent-bridge/workspaces/)"]
-        History["📜 tasks_history.json (Real-time Polling)"]
+        History["📜 tasks_history.json"]
         
         CodexEngine["🤖 Engine 1: OpenAI Codex CLI\n(gpt-6.1-sol, Dangerously Bypass Sandbox)"]
     end
@@ -53,8 +63,16 @@ flowchart TD
         DeepSeekEngine["🧠 Engine 2: DeepSeek R1 14b\n(aipass.cskmitl.com NDJSON Stream)"]
     end
 
-    Backend -->|Local CLI Pipe| CodexEngine
-    Backend -->|HTTPS API / v1 / api/chat| DeepSeekEngine
+    Backend -->|Enqueue Job| RedisQueue
+    Worker -->|BRPOP Job| RedisQueue
+    Worker -->|Acquire Lock| RedisLease
+    Worker -->|Publish Status/Logs| RedisPubSub
+    Worker -->|Execute| CodexEngine
+    Worker -->|Execute| DeepSeekEngine
+    Worker -->|Run Verification| TestGate
+    Worker -->|Record| History
+    RedisPubSub -->|SSE Stream /api/task/id/events| Dashboard
+    RedisPubSub -->|SSE Stream /api/task/id/events| CLIHelper
 ```
 
 ---
@@ -63,9 +81,14 @@ flowchart TD
 
 | ฟีเจอร์ | รายละเอียด | สถานะ |
 | :--- | :--- | :---: |
+| **Redis 7 Job Queue & Worker** | จัดคิวงานแบบ Asynchronous (HTTP 202 + `taskId`) ควบคุมผ่าน Background Worker แยกจาก API Server | ✅ ใช้งานจริง |
+| **Server-Sent Events (SSE)** | สตรีมผลลัพธ์ สถานะคิว และขั้นตอนการทำงานแบบเรียลไทม์ผ่าน Redis PubSub | ✅ ใช้งานจริง |
+| **Automated Evidence Test Gate** | ตรวจสอบโค้ดอัตโนมัติด้วย Unit Test (`npm test`, `pytest`) หรือ Syntax Check ก่อนรับงาน | ✅ ใช้งานจริง |
+| **Safe Workspace Lease Check** | ล็อค Workspace ด้วย Redis Lease ป้องกันการลบ Temp Workspace ระหว่างมีงานรันอยู่ (409 Conflict) | ✅ ใช้งานจริง |
+| **Export Report System** | ดาวน์โหลดรายงานผลงานเป็น Markdown (.md), Git Patch (.patch) หรือ Audit JSON (.json) | ✅ ใช้งานจริง |
 | **11 Modular Components** | แยกโค้ดหน้าเว็บเป็น 11 คอมโพเนนต์อิสระบน Svelte 5 ด้วย Runes | ✅ ใช้งานจริง |
 | **Auto Temp Workspace** | สร้าง Workspace อัตโนมัติตามชื่อคำถาม (Slugify ภาษาไทย/อังกฤษ) | ✅ ใช้งานจริง |
-| **Safe Trash & Clean** | ปุ่มลบ Workspace รายตัว และปุ่มล้างโฟลเดอร์ Temp ทั้งหมด | ✅ ใช้งานจริง |
+| **Safe Trash & Clean** | ปุ่มลบ Workspace รายตัว และปุ่มล้างโฟลเดอร์ Temp ทั้งหมด (พร้อมการตรวจจับ Active Locks) | ✅ ใช้งานจริง |
 | **Task Intent Detection** | จำแนก `💻 Code Task` vs `💡 General / Planning` อัตโนมัติ ป้องกัน Timeout | ✅ ใช้งานจริง |
 | **Anti-Hallucination Policy** | กฎเหล็กระดับระบบ ห้ามจำลองคำตอบ ต้องรันโมเดลจริงบนเซิร์ฟเวอร์เสมอ | ✅ ใช้งานจริง |
 | **Dual Compare View** | รัน 2 โมเดลพร้อมกัน เปรียบเทียบผลลัพธ์แบบ Side-by-Side | ✅ ใช้งานจริง |
@@ -81,12 +104,12 @@ flowchart TD
 
 ```text
 dashboard/src/lib/components/
-├── Header.svelte             # แถบด้านบน แสดงสถานะเซิร์ฟเวอร์ โควต้า และ Token Stats
+├── Header.svelte             # แถบด้านบน แสดงสถานะเซิร์ฟเวอร์ โควต้า Token และ Redis Queue Status
 ├── WorkspaceSidebar.svelte   # แถบด้านซ้าย จัดการ Workspace, Auto Temp และปุ่มลบ Trash
 ├── HistorySidebar.svelte     # แถบประวัติงาน ค้นหาและกรองประวัติตาม Provider
 ├── TaskInput.svelte          # กล่องรับ Prompt พร้อมป้าย Intent และตัวเลือก Model
 ├── QuickCommand.svelte       # คอนโซลรันคำสั่ง Bash ด่วนใน Workspace ปัจจุบัน
-├── ResultsViewer.svelte      # ตัวจัดการแท็บ Response, Git Diff, Raw Logs และ Files
+├── ResultsViewer.svelte      # ตัวจัดการแท็บ Response, Diff, Test Gate, Logs และ Export Report
 ├── DualCompareView.svelte    # หน้าจอเปรียบเทียบผลลัพธ์ Codex vs DeepSeek คู่กัน
 ├── SingleResultView.svelte   # หน้าจอแสดงผลลัพธ์ของโมเดลเดี่ยว
 ├── DiffViewer.svelte         # แสดง Git diff ไฮไลต์โค้ดที่เปลี่ยนแปลง
@@ -94,84 +117,48 @@ dashboard/src/lib/components/
 └── CloneModal.svelte         # ป๊อปอัปโคลน Git Repository เข้าสู่ Workspace
 ```
 
-### การจัดการ State ด้วย Svelte 5 Runes:
-* `$state(...)`: จัดการ Reactive State หลัก เช่น `history`, `activeWs`, `prompt`, `singleResult`, `dualCodex`
-* `$derived(...)`: คำนวณค่าอัตโนมัติเมื่อ State เปลี่ยน เช่น `extractThoughtAndBody(result.logs)`
-* `$props()` / `$bindable()`: ถ่ายทอดข้อมูลแบบ Two-way binding ระหว่างหน้าหลักและ Input Form
-* **SSR Hydration Protection:** ดึงข้อมูลเริ่มต้นจาก `PageData` ส่งเข้า `$state` โดยตรง ป้องกันปัญหาหน้าเว็บกระพริบหรือข้อมูลประวัติว่างเปล่าขณะโหลดครั้งแรก
-
 ---
 
 ## 2. 🗂️ ระบบ Auto Temp Workspace และการจัดการพื้นที่
-
-ระบบช่วยให้ผู้ใช้สั่งงานได้ทันทีโดยไม่ต้องสร้างโฟลเดอร์ล่วงหน้า:
 
 ### 2.1 Auto Temp Workspace:
 * เมื่อเลือก workspace เป็น `Auto Temp` แล้วพิมพ์คำสั่ง ระบบจะนำข้อความ Prompt มาสร้างชื่อโฟลเดอร์อัตโนมัติ:
   ```text
   temp-<slug-ภาษาไทยหรืออังกฤษ>-<รหัสสุ่ม 4 ตัว>
-  ตัวอย่าง: temp-สรุปข้อดีรถไฟความเร็วสูง-a9b1
+  ตัวอย่าง: temp-เขียนฟังก์ชัน-python-สำหรับตรวจสอบเ-fj44
   ```
 * ระบบสร้างไฟล์ `README.md` และเริ่มต้น Git repository (`git init`) ให้พร้อมทำงานทันที
 
 ### 2.2 การลบ Workspace (Workspace Clean & Deletion):
-* **ลบรายตัว (Individual Delete):** มีปุ่มถังขยะสำหรับแต่ละ workspace (พร้อม Dialog ยืนยันก่อนลบ)
-* **ล้าง Temp ทั้งหมด (Clean Temp):** ปุ่มลบโฟลเดอร์ที่ขึ้นต้นด้วย `temp-*` ทั้งหมดในคลิกเดียวเพื่อคืนพื้นที่ฮาร์ดดิสก์
-* ⚠️ **การลบถาวร (Permanent Deletion):** การลบ workspace ผ่านระบบจะใช้ `fs.rmSync(..., { recursive: true, force: true })` เพื่อลบโฟลเดอร์ออกจากดิสก์ทันที (ไม่มี Recycle Bin พักไฟล์) จึงควรระวังก่อนยืนยัน
-* **การเก็บประวัติงาน (History Retention):** แม้โฟลเดอร์โปรเจกต์จะถูกลบออกไป แต่ระบบบันทึกประวัติ (Logs / Git Diff / Responses) ของ **50 งานล่าสุด** ใน `tasks_history.json` จะยังคงเปิดดูย้อนหลังผ่านหน้า Web Dashboard ได้ตามปกติ
+* **Safe Lease Guard:** ระบบจะตรวจสอบใน Redis ก่อนว่า Workspace นั้นกำลังมี Task สถานะ `running` อยู่หรือไม่ หากมี งานลบจะถูกปฏิเสธด้วยรหัส **HTTP 409 Conflict** ทันที เพื่อป้องกันข้อมูลสูญหาย
+* **Clean Temp:** ล้างโฟลเดอร์ `temp-*` ที่ไม่มี Task ใช้งานอยู่ทั้งหมดในคลิกเดียว
 
 ---
 
 ## 3. 🎯 Task Intent Detection (💻 Code vs 💡 General / Planning)
 
-ปัญหาเดิมของระบบ Autonomous Coding Agent คือเมื่อได้รับคำถามทั่วไป (เช่น วางแผนท่องเที่ยว, ปรึกษาความรู้, รีวิวบทความ) ตัวโมเดลจะพยายามวิ่งค้นหาไฟล์โค้ดในโฟลเดอร์ จนเกิดอาการติดลูปหรือ Timeout
-
-ระบบจึงติดตั้ง **Task Intent Classifier (`detectTaskType`)**:
-
-```typescript
-// dashboard/src/lib/types.ts & server.mjs
-export function detectTaskType(prompt: string): 'code' | 'general'
-```
-
-### พฤติกรรมที่ปรับเปลี่ยนตามประเภทงาน:
-| ประเภทงาน | ป้ายบนหน้าเว็บ | พฤติกรรมของ Codex (ChatGPT) | พฤติกรรมของ DeepSeek R1 |
-| :--- | :---: | :--- | :--- |
-| **💻 Code Task** | `💻 Code Task` | ตรวจสอบไฟล์ในโปรเจกต์, สร้าง Branch, เขียนโค้ด, รัน Unit Test, สร้าง Git Diff | ส่งโครงสร้างไฟล์โปรเจกต์ และสั่งให้โมเดลตอบในรูปแบบ `file:path/to/file` |
-| **💡 General / Planning** | `💡 General / Planning` | ส่งคำแนะนำให้ตอบตรงประเด็นทันที ข้ามขั้นตอนค้นหาไฟล์ใน shell **(ตอบเร็วขึ้นจาก 15 นาที เหลือเพียง 7 วินาที!)** | สวมบทบาทเป็น AI Advisor ตอบภาษาไทยอย่างละเอียด ไม่ต้องพยายามแปลงเป็นไฟล์โค้ด |
+ระบบติดตั้ง **Task Intent Classifier (`detectTaskType`)**:
+* **💻 Code Task:** ตรวจสอบไฟล์ในโปรเจกต์, สร้าง Branch, เขียนโค้ด, รัน Unit Test, สร้าง Git Diff
+* **💡 General / Planning:** ส่งคำแนะนำให้ตอบตรงประเด็นทันที ข้ามขั้นตอนค้นหาไฟล์ใน shell (ตอบเร็วขึ้นจาก 15 นาที เหลือเพียง 7 วินาที)
 
 ---
 
 ## 4. 🛡️ กฎเหล็ก Anti-Hallucination & Multi-Agent Strict Policy
 
-เพื่อความน่าเชื่อถือและความโปร่งใสสูงสุด ระบบได้กำหนด **Global Rules** ระดับเครื่องไว้ที่ `~/.gemini/config/rules/proxmox-codex-bridge.md` และ `~/.gemini/config/AGENTS.md`:
-
-1. **ห้าม Roleplay หรือกุเรื่องจำลองบทสนทนาเด็ดขาด:**  
-   AI ผู้ช่วยต้องไม่สมมุติตัวเองเป็น ChatGPT หรือ DeepSeek และต้องไม่แต่งบทละครการประชุม (AI Summit) ขึ้นมาเอง
-2. **เรียกใช้โมเดลจริงเสมอ:**  
-   เมื่อผู้ใช้พูดถึง *"ChatGPT"*, *"Codex"*, *"DeepSeek"*, หรือ *"ทั้ง 3 ตัวช่วยกันคิด"* ระบบจะต้องส่งคำขอไปยัง Proxmox Bridge (`run_dual_task`, `run_codex_task`, `run_deepseek_task`) เพื่อรันบนเครื่องจริงเท่านั้น
-3. **รายงานสถานะอย่างตรงไปตรงมา:**  
-   หากโมเดลตัวใดติดปัญหาคิว (เช่น DeepSeek ติด 403 GPU slot) หรือเกิด Timeout ระบบจะแจ้งสาเหตุที่แท้จริงให้ผู้ใช้ทราบทันที ไม่มีการแอบส่ง curl เองนอกรอบโดยไม่แจ้ง
+1. **ห้าม Roleplay หรือกุเรื่องจำลองบทสนทนาเด็ดขาด:** AI ผู้ช่วยต้องไม่สมมุติตัวเองเป็น ChatGPT หรือ DeepSeek
+2. **เรียกใช้โมเดลจริงเสมอ:** เมื่อผู้ใช้สั่งงาน ระบบจะส่งผ่าน Proxmox Bridge ไปประมวลผลบนเครื่องจริงเท่านั้น
+3. **รายงานสถานะอย่างตรงไปตรงมา:** รายงานผลลัพธ์และข้อผิดพลาดที่เกิดขึ้นจริงเสมอ
 
 ---
 
 ## 5. 🌲 Dual Compare View & Git Worktree Isolation
 
-* **ขจัด Race Condition ด้วย Git Worktree Isolation:**  
-  ในการทำงานแบบขนาน (Dual Mode) ทั้งสองโมเดลจะไม่รันคำสั่งลงบน Root directory เดียวกัน แต่ระบบจะสร้าง Isolated Worktree ใน `.worktrees/codex-<id>` และ `.worktrees/deepseek-<id>` ชั่วคราว:
-  * โมเดลแต่ละตัวทำงานบน Branch ของตัวเองอย่างอิสระ ไม่มีการแย่ง Checkout หรือเขียนทับไฟล์ระหว่างกัน
-  * เมื่อจบงาน ระบบจะบันทึก Commit ลง Git branch ของโมเดลนั้นๆ แล้ว Prune Worktree ออก คืนความสะอาดให้ Repository 100%
-* **เปรียบเทียบผลลัพธ์แบบข้างต่อข้าง (Side-by-Side Dual Comparison):**  
-  หน้าเว็บมี Toolbar สลับมุมมองได้ทั้ง `Split (Side-by-Side)`, `Codex Only`, หรือ `DeepSeek Only` พร้อมแสดง Git Diff และ Token สรุปของแต่ละตัว
-* **การตรวจสอบความคิด (Chain-of-Thought):**  
-  แท็บ Response & Reasoning มีการ์ดพับ/ขยายเพื่ออ่านกระบวนการคิดและวางแผน (`<think>...</think>`) ของโมเดล DeepSeek R1
-* **Token Tracking:**  
-  ติดตามจำนวน Token ที่ใช้ ทั้ง Input, Cached Tokens, และ Completion Tokens อย่างแม่นยำ
+* **Git Worktree Isolation:** ในการทำงานแบบขนาน (Dual Mode) ทั้งสองโมเดลจะไม่รันคำสั่งลงบน Root directory เดียวกัน แต่ระบบจะสร้าง Isolated Worktree ใน `.worktrees/codex-<id>` และ `.worktrees/deepseek-<id>`
+* เมื่อจบงาน ระบบจะบันทึก Commit ลง Git branch ของโมเดลนั้นๆ แล้ว Prune Worktree ออก คืนความสะอาดให้ Repository 100%
 
 ---
 
 ## 6. 🤝 Multi-Agent Consensus Loop (Bilateral Peer Review)
-
-เพื่อยกระดับระบบจากการเป็นเพียง "ตัวเปรียบเทียบ" สู่ **"ทีม AI ทำงานร่วมกันจริง (Autonomous Multi-Agent Collaboration)"** ระบบได้เพิ่มโหมด **`Consensus (Loop)`**:
 
 ```mermaid
 sequenceDiagram
@@ -180,6 +167,7 @@ sequenceDiagram
     participant Orchestrator as ⚡ Bridge Orchestrator
     participant Codex as 🤖 OpenAI Codex (gpt-6.1-sol)
     participant DeepSeek as 🧠 DeepSeek R1 (14b GPU)
+    participant TestGate as 🛡️ Evidence Test Gate
 
     User->>Orchestrator: สั่งงานในโหมด Consensus
     Note over Orchestrator: Stage 1: Parallel Generation
@@ -197,39 +185,66 @@ sequenceDiagram
     end
 
     Note over Orchestrator: Stage 3: Consensus Harmonization
-    Orchestrator->>Codex: รวบรวม Proposals ทั้ง 2 และ Peer Reviews ทั้งคู่<br/>สังเคราะห์เป็น Master Consensus Solution ลงใน workspace
-    Orchestrator-->>User: บันทึกรายงาน Consensus สมบูรณ์ + Git Diff + ประวัติงาน
+    Orchestrator->>Codex: รวม Proposals และ Peer Reviews<br/>สังเคราะห์เป็น Master Consensus Solution
+    
+    Note over Orchestrator: Stage 4: Automated Evidence Test Gate
+    Orchestrator->>TestGate: รัน Unit Test / Syntax Check โค้ดที่ Harmonize แล้ว
+    TestGate-->>Orchestrator: บันทึกหลักฐาน Test Evidence (Passed/Failed)
+    
+    Orchestrator-->>User: บันทึกรายงาน Consensus + Test Gate + Git Diff + ประวัติงาน
 ```
 
-### 3 ขั้นตอนของ Consensus Loop:
-1. **Stage 1 (Independent Proposals):** Codex และ DeepSeek ทำงานคู่ขนานใน Isolated Worktrees เพื่อสร้างข้อเสนอและโค้ดเบื้องต้นโดยไม่มีการชี้นำซึ่งกันและกัน
-2. **Stage 2 (Bilateral Cross-Review):** นำผลลัพธ์และโค้ดของฝ่ายหนึ่งส่งให้อีกฝ่ายทำหน้าที่เป็น Senior Architect/Auditor เพื่อวิเคราะห์จุดเด่น ข้อบกพร่อง ช่องโหว่ความปลอดภัย และ Edge Cases
-3. **Stage 3 (Master Harmonization & Implementation):** Consensus Orchestrator นำข้อเสนอและคำวิจารณ์จากทั้ง 2 ฝ่ายมากลั่นกรองเป็น **"ชิ้นงานที่สมบูรณ์ที่สุด (Best-of-both-worlds)"** พร้อมเขียนโค้ดเวอร์ชันจริงลงใน Branch `agent/consensus-<id>`
+---
+
+## 7. ⚡ Redis 7 Job Queue, Worker & Safe Workspace Lease
+
+เพื่อรองรับการทำงานระดับ Production และป้องกันปัญหา HTTP Timeout จากคำสั่งที่ใช้เวลานาน ระบบได้ปรับปรุงเป็น **Durable Job Queue Architecture**:
+
+1. **API ตอบกลับทันที (HTTP 202 Accepted):**  
+   เมื่อสั่งงานผ่าน `POST /api/task` ระบบจะสร้าง `taskId` นำเข้าคิว `tasks:queue` ใน Redis และตอบกลับรหัส 202 ทันที ไม่บล็อก Browser หรือ HTTP client
+2. **Background Task Worker (`startTaskWorker`):**  
+   Worker ที่รันอยู่เบื้องหลังจะดึงงานจาก Redis ด้วยคำสั่ง `BRPOP` ประมวลผลทีละงานตามลำดับ พร้อมอัปเดตสถานะ `queued -> running -> validating -> completed`
+3. **Safe Workspace Lease Lock (`acquireWorkspaceLease`):**  
+   ระหว่างที่ Worker กำลังประมวลผลโค้ดใน Workspace จะมีการสร้าง Lease Key ใน Redis (เช่น `workspace:lease:temp-foo` TTL 15 นาที) หากผู้ใช้กดปุ่มลบ Workspace หรือ Clean Temp ระบบจะป้องกันไม่ให้ลบโฟลเดอร์ที่กำลังรันอยู่
+
+---
+
+## 8. 🛡️ Automated Evidence Test Gate (Evidence-Based Testing)
+
+เพื่อแก้ปัญหาที่โมเดลสองตัวอาจเห็นพ้องกันใน Consensus แต่โค้ดยังมีข้อผิดพลาด ระบบจึงเพิ่ม **Automated Evidence Test Gate (`runTestGate`)**:
+* **ตรวจจับ Test Suite อัตโนมัติ:**
+  * หากพบ `package.json` ที่มี `npm test` ระบบจะรัน `npm test`
+  * หากพบไฟล์ทดสอบ Python (`pytest` หรือ `unittest`) ระบบจะรันการทดสอบทันที
+* **Fallback Syntax Verification:**  
+  หากโปรเจกต์ไม่มี Test Suite ระบบจะทำการตรวจสอบไวยากรณ์ (Syntax Check) เช่น `node --check` สำหรับ JavaScript และ `python3 -m py_compile` สำหรับ Python
+* **Test Evidence Card:** แสดงผลลัพธ์การทดสอบ (Passed/Failed พร้อม Command และ Output) ในหน้า Dashboard และแนบในรายงาน Audit Log
+
+---
+
+## 9. 📡 Real-time SSE Streaming & Report Export
+
+1. **Server-Sent Events (SSE):**  
+   Client (Web Dashboard หรือ CLI) สามารถเชื่อมต่อไปยัง `/api/task/{taskId}/events` เพื่อรับความคืบหน้าของคิวงาน, Stage การทำงาน และผลลัพธ์แบบสดผ่าน Redis PubSub
+2. **Report Export:**  
+   บน Web Dashboard ในหน้าผลลัพธ์ มีปุ่ม **Export** สำหรับดาวน์โหลด:
+   * **Markdown (.md):** สรุปรายงานการทำงาน พร้อม Test Gate Evidence, Diff และ Logs
+   * **Git Patch (.patch):** ไฟล์ Patch สำหรับนำไปใช้กับ `git apply`
+   * **Audit JSON (.json):** ข้อมูลดิบทั้งหมดสำหรับนำไปประมวลผลต่อในระบบ CI/CD
 
 ---
 
 ## 🛠️ การติดตั้งและการเชื่อมต่อ (Setup & Deployment)
 
-### 1. การตั้งค่า MCP Server บนเครื่องผู้พัฒนา (`~/.gemini/config/mcp_config.json`):
-```json
-{
-  "mcpServers": {
-    "proxmox-agent": {
-      "command": "ssh",
-      "args": [
-        "-T",
-        "root@192.168.5.159",
-        "node",
-        "/opt/agent-bridge/server.mjs"
-      ]
-    }
-  }
-}
+### 1. การติดตั้ง Redis บน Proxmox Container:
+```bash
+apt update && apt install -y redis-server
+systemctl enable --now redis-server
+redis-cli ping # ควรตอบ PONG
 ```
 
 ### 2. การจัดการ Service บน Proxmox Container:
 ```bash
-# ตรวจสอบสถานะ Web Dashboard
+# ตรวจสอบสถานะ Web Dashboard และ Redis Queue
 systemctl status agent-web.service
 
 # รีสตาร์ทเซอร์วิสเมื่ออัปเดตโค้ด
@@ -244,143 +259,38 @@ npm run build
 
 ## ⚡ การใช้งาน Permanent CLI Runner (`scripts/ask_models.py`)
 
-เพื่อแก้ไขปัญหาที่ AI Agent ในห้องแชทใหม่ชอบสร้างสคริปต์ชั่วคราว (เช่น `find_dual.py`) เพื่อแงะดูประวัติการรัน (`transcript.jsonl`) ระบบจึงได้จัดเตรียมสคริปต์สั่งการถาวร [`scripts/ask_models.py`](scripts/ask_models.py) ที่เชื่อมตรงเข้ากับ Proxmox Bridge REST API (`/api/task`):
-
-### 1. คำสั่งการใช้งานพื้นฐาน:
-```bash
-# รัน Multi-Agent Consensus Loop (Proposals -> Peer Review -> Master Harmonization)
-python scripts/ask_models.py --consensus "ออกแบบสถาปัตยกรรมระบบ Real-time Notification ให้ทนทานและปลอดภัย"
-
-# รันทั้ง 2 โมเดลพร้อมกัน (Codex gpt-6.1-sol + DeepSeek R1 14b) แบบ Dual Mode (Git Worktrees Isolated)
-python scripts/ask_models.py --both "วางแผนสถาปัตยกรรมระบบสำหรับ Real-time Chat"
-
-# รันเฉพาะ OpenAI Codex (ChatGPT Plus: gpt-6.1-sol)
-python scripts/ask_models.py --codex "เขียนโค้ดฟังก์ชันคำนวณ Fibonacci ใน TypeScript"
-
-# รันเฉพาะ DeepSeek R1 (14b GPU KMITL)
-python scripts/ask_models.py --deepseek "วิเคราะห์ข้อดีข้อเสียของ Event-Driven vs Monolith"
-
-# กำหนด Workspace ปลายทาง (หากไม่ระบุจะสร้าง Auto Temp ให้โดยอัตโนมัติ)
-python scripts/ask_models.py --both --workspace "my-project" "สร้าง Unit Test สำหรับ auth service"
-```
-
-### 2. การติดตั้งเป็น Global Tool สำหรับ Antigravity Agent:
-คัดลอกสคริปต์ไปยังโฟลเดอร์ Global Config เพื่อให้ Agent ในทุกห้องแชทสามารถเรียกใช้งานได้ทันที:
-```bash
-# คัดลอกไปยังโฟลเดอร์ Global Config
-cp scripts/ask_models.py ~/.gemini/config/ask_models.py
-```
-
-### 3. การป้องกัน Agent สร้าง Scratch Script:
-ในไฟล์ `~/.gemini/config/rules/proxmox-codex-bridge.md` และ `~/.gemini/config/AGENTS.md` ได้ระบุข้อกำหนดชัดเจน:
-* ❌ **ห้ามสร้างไฟล์ชั่วคราว:** ห้ามสร้าง `find_dual.py`, `check_server.py` หรือเขียนสคริปต์แงะประวัติแชทเก่า
-* ✅ **รันตรงคำสั่งเดียว:** บังคับให้เรียกผ่าน `python ~/.gemini/config/ask_models.py` โดยตรงผ่านเครื่องมือ `run_command` เสมอ
-
-## 📦 คู่มือการย้ายเครื่อง (Migration Guide)
-
-หากต้องการย้ายระบบไปยังเครื่องใหม่ สามารถทำตามขั้นตอนด้านล่างตามกรณีการใช้งาน:
-
-### กรณีที่ 1: ย้าย "เครื่องคอมพิวเตอร์ผู้พัฒนา" (Client PC / Laptop ใหม่ไปใช้ Antigravity)
-*(ตัว Proxmox CT ยังรันอยู่ที่เดิม `192.168.5.159:3000` ย้ายเฉพาะเครื่องคอมพิวเตอร์ที่คุณนั่งทำงาน)*
-
-เมื่อติดตั้ง **Google Antigravity** บนเครื่องใหม่แล้ว สามารถติดตั้งระบบเชื่อมต่อทั้งหมดให้เสร็จใน **2 คำสั่ง (One-Click Setup)**:
+สคริปต์ [`scripts/ask_models.py`](scripts/ask_models.py) ได้รับการอัปเกรดให้เชื่อมต่อกับ Redis Job Queue และสตรีมความคืบหน้าผ่าน SSE แบบเรียลไทม์:
 
 ```bash
-# 1. โคลน Repository โค้ดลงเครื่องใหม่
-git clone https://github.com/techasit5415/proxmox-codex-bridge.git
-cd proxmox-codex-bridge
+# 1. สั่งงาน Consensus Loop พร้อมดูความคืบหน้าแบบสด
+python scripts/ask_models.py --consensus "ออกแบบระบบ Authentication ด้วย JWT ใน Node.js"
 
-# 2. รันสคริปต์ติดตั้งระบบ Client อัตโนมัติ
-python scripts/setup_client.py
+# 2. รันเปรียบเทียบ Dual Mode (Codex vs DeepSeek)
+python scripts/ask_models.py --both "เขียน binary search ใน Go"
+
+# 3. สั่งงานเฉพาะ OpenAI Codex
+python scripts/ask_models.py --codex "refactor utils.ts"
+
+# 4. สั่งงานเฉพาะ DeepSeek R1
+python scripts/ask_models.py --deepseek "อธิบายความแตกต่างระหว่าง Process และ Thread"
 ```
-
-✨ **สคริปต์ `setup_client.py` จะจัดการทุกอย่างให้คุณอัตโนมัติใน 3 วินาที:**
-1. **ติดตั้ง Bridge Runner:** คัดลอก `ask_models.py` ไปไว้ที่ `~/.gemini/config/ask_models.py`
-2. **ติดตั้งคู่มือสมองของ Antigravity (Global Rules):** ใส่กฎเหล็กใน `~/.gemini/config/rules/` และ `AGENTS.md` เพื่อสั่งให้ Antigravity บนเครื่องใหม่รู้จักคำสั่งเรียก **ChatGPT, DeepSeek, และทั้ง 3 ตัว** ทันที ไม่ตอบมั่วเอง
-3. **ติดตั้ง Dependencies:** ตรวจสอบและติดตั้ง `requests` สำหรับ Python
-4. **ทดสอบการเชื่อมต่อ:** ทดสอบยิง Ping ไปยัง Proxmox CT (`192.168.5.159:3000`) ให้อัตโนมัติ
-
----
-
-⚡ **ทดสอบสั่งงานหลังจากติดตั้ง:**
-เปิด Terminal บนเครื่องใหม่แล้วพิมพ์ทดสอบได้ทันที:
-```bash
-python ~/.gemini/config/ask_models.py --both "สวัสดี ทดสอบการเชื่อมต่อจากเครื่องใหม่"
-```
-*(หรือเปิดหน้าต่างแชท Antigravity แล้วพิมพ์สั่งงาน "ทั้ง 3 ตัวช่วยกันคิด..." ได้ทันที)*
-
----
-
-### กรณีที่ 2: ย้าย "Proxmox Server" ไปยังเครื่องแม่ข่ายเครื่องใหม่
-*(ย้ายตัว LXC Container ทั้งระบบไปยัง Node หรือ Proxmox VE ตัวใหม่)*
-
-#### วิธีที่ 1: ใช้ Proxmox Backup & Restore (VZDump) — แนะนำและสมบูรณ์ที่สุด ⭐
-1. **บน Proxmox VE โหนดเดิม:**
-   * ไปที่ Web GUI -> เลือก Container (LXC) ตัว Bridge -> คลิกเมนู **Backup** -> กด **Backup now** (บีบอัดเป็น `.tar.zst`)
-2. **คัดลอกไฟล์ Backup ข้ามเครื่อง:**
-   ```bash
-   scp /var/lib/vz/dump/vzdump-lxc-*.tar.zst root@<IP_PROXMOX_ใหม่>:/var/lib/vz/dump/
-   ```
-3. **บน Proxmox VE โหนดใหม่:**
-   * ไปที่ Storage `local` -> เลือกเมนู **Backups** -> เลือกไฟล์แล้วกด **Restore**
-   * กำหนด Static IP ให้เป็น `192.168.5.159` เท่านี้ทั้ง Systemd service, Codex CLI authentication, และ Node.js environment จะทำงานต่อได้ทันที 100%
-
-#### วิธีที่ 2: ติดตั้งใหม่จาก Git บน Container ใหม่ (Clean Setup)
-1. สร้าง Debian/Ubuntu LXC Container ใหม่
-2. ติดตั้ง Node.js 20+, Python 3, และ Git:
-   ```bash
-   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-   apt-get install -y nodejs git python3 python3-pip
-   npm install -g @openai/codex
-   ```
-3. โคลนโค้ดและบิลด์ระบบ:
-   ```bash
-   git clone https://github.com/techasit5415/proxmox-codex-bridge.git /opt/agent-bridge
-   cd /opt/agent-bridge/dashboard
-   npm install
-   npm run build
-   ```
-4. ติดตั้ง Systemd Service สำหรับรันเว็บและ API:
-   ```bash
-   # สร้าง /etc/systemd/system/agent-web.service
-   systemctl daemon-reload
-   systemctl enable --now agent-web.service
-   ```
-
----
-
-## ❓ คำถามที่พบบ่อย (FAQ)
-
-### Q1: ทำไมบางครั้ง DeepSeek R1 ถึงแจ้งข้อผิดพลาด 504 Gateway Timeout หรือ 403 Slot Quota?
-**A:** DeepSeek R1 รันอยู่บน GPU Cluster ของ CS KMITL ซึ่งมีการแชร์การใช้งานร่วมกัน หากคลัสเตอร์มีผู้ใช้งานพร้อมกันจำนวนมาก ระบบ Nginx จะตอบกลับเป็น 504 Timeout หรือ 403 Full Slot แต่ระบบ Proxmox Bridge จะส่งข้อมูลข้อผิดพลาดตรงไปตรงมา และ OpenAI Codex จะยังคงทำงานและส่งผลลัพธ์ให้คุณได้ตามปกติ
-
-### Q2: หากหน้า Web Dashboard (Port 3000) เข้าไม่ได้ ต้องตรวจสอบอย่างไร?
-**A:** เข้า SSH ไปที่ Proxmox CT แล้วตรวจเช็คสถานะเซอร์วิส:
-```bash
-ssh root@192.168.5.159 "systemctl status agent-web.service"
-# หากหยุดทำงาน ให้สั่งรีสตาร์ท:
-ssh root@192.168.5.159 "systemctl restart agent-web.service"
-```
-
-### Q3: จะทดสอบว่าสคริปต์ `ask_models.py` เชื่อมต่อเซิร์ฟเวอร์ได้หรือไม่ทำอย่างไร?
-**A:** รันคำสั่งทดสอบสั้นๆ จากคอมพิวเตอร์ของคุณ:
-```bash
-python scripts/ask_models.py --codex "test connection"
-```
-หากแสดงผลลัพธ์ของ Codex พร้อม URL บันทึกใน Dashboard แสดงว่าการเชื่อมต่อสมบูรณ์
 
 ---
 
 ## 📝 บันทึกประวัติการพัฒนา (Changelog)
 
-* **v2.2.0 (ล่าสุด):**
-  * เพิ่มระบบ **Task Intent Detection** แยกประเภทงาน `💻 Code Task` vs `💡 General / Planning` อัตโนมัติ ป้องกันปัญหา Codex ค้นหาไฟล์วนลูปจน Timeout
-  * ติดตั้ง **Global Anti-Hallucination Rules** บังคับใช้ทุกห้องแชท ป้องกันการจำลองคำตอบของโมเดลอื่น
-  * แก้ไขปัญหา **Auto-select บน F5** หน้าเว็บเปิดมาด้วยสถานะ Clean State เสมอ
+* **v2.3.0 (ล่าสุด):**
+  * ติดตั้ง **Redis 7 Job Queue & Worker (`dashboard/src/lib/queue.ts`)** สั่งงานแบบ Asynchronous ผ่าน HTTP 202
+  * เพิ่มระบบ **Server-Sent Events (SSE) `/api/task/[id]/events`** สตรีม Logs และสถานะคิวงานแบบสด
+  * เพิ่มระบบ **Automated Evidence Test Gate (`runTestGate`)** ตรวจสอบ Unit Test และ Syntax อัตโนมัติ
+  * เพิ่มระบบ **Safe Workspace Lease Lock** ล็อค Workspace ใน Redis ป้องกันการลบขณะมีงานรันอยู่ (409 Conflict)
+  * เพิ่มปุ่ม **Export Report** ดาวน์โหลดรายงานผลงานเป็น Markdown, Git Patch (.patch) หรือ Audit JSON
+  * ปรับปรุง **Permanent CLI Runner (`scripts/ask_models.py`)** ให้รองรับการสตรีมผ่าน Redis SSE
+* **v2.2.0:**
+  * เพิ่มระบบ **Task Intent Detection** แยกประเภทงาน `💻 Code Task` vs `💡 General / Planning`
+  * ติดตั้ง **Global Anti-Hallucination Rules** บังคับใช้ทุกห้องแชท
 * **v2.1.0:**
   * แยกโค้ดหน้าเว็บเป็น **11 Modular Components** บน SvelteKit 5 Runes
-  * เพิ่มระบบ **Auto Temp Workspace** พร้อมการตั้งชื่อ Slugify ภาษาไทย/อังกฤษ
-  * เพิ่มระบบ **Safe Trash** ลบ Workspace รายตัวและล้าง Temp แบบแยกส่วน
+  * เพิ่มระบบ **Auto Temp Workspace** พร้อมการตั้งชื่อ Slugify
 * **v2.0.0:**
   * เปิดตัว **Dual Comparison Engine** รัน OpenAI Codex CLI คู่กับ DeepSeek R1 KMITL GPU
-  * รองรับ MCP Protocol over SSH

@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 CLI Helper for Antigravity & Proxmox Codex Bridge
-Directly queries Proxmox LXC Container at 192.168.5.159:3000
+Directly queries Proxmox LXC Container with Redis Job Queue & SSE Streaming
 """
 
 import sys
+import os
 import json
+import time
 import argparse
 import urllib.request
 import urllib.error
@@ -15,23 +17,93 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 PROXMOX_BRIDGE_URL = "http://192.168.5.159:3000/api/task"
 
-def query_bridge(provider: str, prompt: str, workspace: str = "temp"):
+def stream_or_poll_task(task_id: str):
+    events_url = f"http://192.168.5.159:3000/api/task/{task_id}/events"
+    try:
+        req = urllib.request.Request(events_url, headers={"Accept": "text/event-stream"})
+        with urllib.request.urlopen(req, timeout=900) as resp:
+            for line in resp:
+                line_str = line.decode('utf-8', errors='ignore').strip()
+                if line_str.startswith('data: '):
+                    try:
+                        ev = json.loads(line_str[6:])
+                        ev_type = ev.get('type')
+                        if ev_type == 'status':
+                            st = ev.get('status')
+                            print(f"  [Queue Status]: {st}")
+                        elif ev_type == 'stage':
+                            print(f"  ⚡ {ev.get('stage')}")
+                        elif ev_type == 'done':
+                            return ev.get('result', {})
+                        elif ev_type == 'error':
+                            print(f"\n[ERROR] Task execution failed: {ev.get('error')}", file=sys.stderr)
+                            sys.exit(1)
+                    except json.JSONDecodeError:
+                        pass
+    except Exception:
+        # Fallback to polling /api/task/<task_id>
+        pass
+
+    # Polling fallback
+    status_url = f"http://192.168.5.159:3000/api/task/{task_id}"
+    last_stage = None
+    for _ in range(300):
+        try:
+            req = urllib.request.Request(status_url)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                task = data.get('task', {})
+                status = task.get('status')
+                stage = task.get('stage')
+                if stage and stage != last_stage:
+                    print(f"  ⚡ {stage}")
+                    last_stage = stage
+                if status == 'completed':
+                    return task.get('result', {})
+                elif status == 'failed':
+                    print(f"\n[ERROR] Task execution failed: {task.get('error')}", file=sys.stderr)
+                    sys.exit(1)
+        except Exception:
+            pass
+        time.sleep(2)
+    
+    raise TimeoutError(f"Task {task_id} timed out waiting for completion")
+
+def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode: bool = False):
     payload = {
         "provider": provider,
         "prompt": prompt,
         "workspace": workspace
     }
     
+    url = f"{PROXMOX_BRIDGE_URL}?sync=true" if sync_mode else PROXMOX_BRIDGE_URL
     req = urllib.request.Request(
-        PROXMOX_BRIDGE_URL,
+        url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"}
     )
     
     try:
-        with urllib.request.urlopen(req, timeout=450) as resp:
+        with urllib.request.urlopen(req, timeout=900) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+            if resp.status == 202 or (data.get("taskId") and data.get("status") == "queued"):
+                task_id = data["taskId"]
+                print(f"[Redis Job Queue] Task '{task_id}' enqueued. Streaming live updates...\n")
+                return stream_or_poll_task(task_id)
             return data
+    except urllib.error.HTTPError as e:
+        if e.code == 202:
+            data = json.loads(e.read().decode("utf-8"))
+            task_id = data["taskId"]
+            print(f"[Redis Job Queue] Task '{task_id}' enqueued (HTTP 202). Streaming live updates...\n")
+            return stream_or_poll_task(task_id)
+        elif e.code == 409:
+            err_data = e.read().decode('utf-8', errors='ignore')
+            print(f"[ERROR 409] Workspace Conflict: {err_data}", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"[ERROR] HTTP Error {e.code}: {e.read().decode('utf-8', errors='ignore')}", file=sys.stderr)
+            sys.exit(1)
     except urllib.error.URLError as e:
         print(f"[ERROR] Cannot connect to Proxmox Bridge at {PROXMOX_BRIDGE_URL}: {e}", file=sys.stderr)
         sys.exit(1)
@@ -40,7 +112,7 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp"):
         sys.exit(1)
 
 def main():
-    parser = argparse.ArgumentParser(description="Proxmox Codex Bridge Multi-Agent Runner")
+    parser = argparse.ArgumentParser(description="Proxmox Codex Bridge Multi-Agent Runner (Redis Queue & SSE)")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--consensus", action="store_true", help="Run Multi-Agent Consensus Loop (Proposals -> Peer Review -> Harmonization)")
     group.add_argument("--both", action="store_true", help="Query both Codex and DeepSeek R1 concurrently (Isolated Git Worktrees)")
@@ -48,7 +120,8 @@ def main():
     group.add_argument("--deepseek", action="store_true", help="Query DeepSeek R1 (14b GPU) only")
     
     parser.add_argument("--workspace", default="temp", help="Target workspace or 'temp' for auto temp")
-    parser.add_argument("prompt", help="The prompt / instruction to send")
+    parser.add_argument("--sync", action="store_true", help="Run synchronously without Redis queue")
+    parser.add_argument("prompt", help="The prompt / instruction to send (or path to text file)")
     
     args = parser.parse_args()
     
@@ -60,7 +133,12 @@ def main():
     elif args.deepseek:
         provider = "deepseek"
         
-    res = query_bridge(provider, args.prompt, args.workspace)
+    prompt_text = args.prompt
+    if os.path.isfile(args.prompt):
+        with open(args.prompt, 'r', encoding='utf-8') as pf:
+            prompt_text = pf.read()
+            
+    res = query_bridge(provider, prompt_text, args.workspace, sync_mode=args.sync)
     
     print(f"\n[Proxmox Bridge Task Completed | Mode: {res.get('mode', provider)} | Workspace: {res.get('workspace')}]")
     print(f"Recorded in Dashboard: http://192.168.5.159:3000\n")
@@ -129,6 +207,16 @@ def main():
         if res.get("diff"):
             print("\n--- [Git Diff] ---")
             print(res.get("diff"))
+
+    # Evidence Test Gate
+    test_evidence = res.get("testEvidence") or (res.get("consensus") or {}).get("testEvidence")
+    if test_evidence and test_evidence.get("ran"):
+        status_label = "PASSED (✔)" if test_evidence.get("passed") else "FAILED (✖)"
+        print("\n" + "=" * 60)
+        print(f"🛡️ [Automated Evidence Test Gate: {status_label}]")
+        print("=" * 60)
+        print(f"Command: {test_evidence.get('testCmd')}")
+        print(test_evidence.get("output", "(No output)"))
 
 if __name__ == "__main__":
     main()

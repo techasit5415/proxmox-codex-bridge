@@ -32,6 +32,11 @@
 			<span>KMITL GPU (14b)</span>
 		</div>
 
+		<div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 {status?.redisStatus === 'online' ? 'text-rose-300' : 'text-zinc-500'}">
+			<span class="w-1.5 h-1.5 rounded-full {status?.redisStatus === 'online' ? 'bg-rose-400 animate-pulse' : 'bg-zinc-600'}"></span>
+			<span>Redis Queue {status?.queueLength ? `(${status.queueLength})` : ''}</span>
+		</div>
+
 		{#if tokenStats}
 			<div class="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
 				<span class="text-zinc-500">Tokens:</span>
@@ -51,7 +56,7 @@
 				title="ตั้งค่า AI Models (Claude, OpenAI, Gemini)"
 			>
 				<Settings class="w-3.5 h-3.5 text-amber-400" />
-				<span class="font-medium">Models (Settings)</span>
+				<span class="font-medium">Models</span>
 			</button>
 		{/if}
 

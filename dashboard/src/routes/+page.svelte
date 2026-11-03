@@ -242,6 +242,74 @@
 			});
 			const d = await res.json();
 
+			if (res.status === 202 && d.taskId) {
+				taskBadge = 'Queued in Redis Job Queue...';
+				taskBadgeType = 'running';
+
+				const eventSource = new EventSource('/api/task/' + d.taskId + '/events');
+
+				eventSource.onmessage = async (e) => {
+					try {
+						const event = JSON.parse(e.data);
+						if (event.type === 'status') {
+							taskBadge = event.status === 'queued' ? 'Queued in Redis...' : 'Running on Proxmox...';
+						} else if (event.type === 'stage') {
+							taskBadge = event.stage;
+						} else if (event.type === 'done') {
+							eventSource.close();
+							taskBadge = 'Completed';
+							taskBadgeType = 'success';
+							isExecuting = false;
+
+							const result = event.result || {};
+							if (result.workspace && activeWs !== 'all' && result.workspace !== activeWs) {
+								activeWs = result.workspace;
+								await fetchWorkspaces();
+							}
+
+							if (result.mode === 'consensus') {
+								consensusResult = result.consensus;
+								dualCodex = null;
+								dualDeepSeek = null;
+								singleResult = null;
+							} else if (result.mode === 'both') {
+								dualCodex = result.codex;
+								dualDeepSeek = result.deepseek;
+								consensusResult = null;
+								singleResult = null;
+							} else {
+								singleResult = result;
+								dualCodex = null;
+								dualDeepSeek = null;
+								consensusResult = null;
+							}
+
+							fetchWorkspaceDetails(activeWs);
+							fetchStatus();
+							await fetchHistory(false);
+						} else if (event.type === 'error') {
+							eventSource.close();
+							taskBadge = 'Failed: ' + (event.error || 'Execution error');
+							taskBadgeType = 'error';
+							isExecuting = false;
+						}
+					} catch (parseErr) {
+						console.error('SSE Parse Error:', parseErr);
+					}
+				};
+
+				eventSource.onerror = () => {
+					eventSource.close();
+					setTimeout(async () => {
+						await fetchHistory(true);
+						isExecuting = false;
+						taskBadge = 'Completed';
+						taskBadgeType = 'success';
+					}, 2000);
+				};
+				return;
+			}
+
 			if (d.success) {
 				taskBadge = 'Completed';
 				taskBadgeType = 'success';

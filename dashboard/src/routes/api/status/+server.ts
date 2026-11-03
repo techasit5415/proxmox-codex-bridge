@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import util from 'util';
 import path from 'path';
 import fs from 'fs';
+import { getRedisClient, isRedisConnected } from '$lib/queue';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
@@ -89,6 +90,17 @@ export const GET: RequestHandler = async () => {
 		const { stdout: codexVer } = await execAsync('codex --version 2>/dev/null || echo "codex-cli"');
 		const tokens = getSessionTokens();
 
+		let redisStatus = 'offline';
+		let queueLength = 0;
+		try {
+			const connected = await isRedisConnected();
+			if (connected) {
+				redisStatus = 'online';
+				const redis = getRedisClient();
+				queueLength = await redis.llen('tasks:queue');
+			}
+		} catch (e) {}
+
 		return json({
 			status: 'online',
 			codexAuth: isAuthed ? 'ChatGPT Plus' : 'Not Connected',
@@ -97,6 +109,8 @@ export const GET: RequestHandler = async () => {
 			diskUsage: df.trim(),
 			memoryUsage: mem.trim(),
 			workspacesDir: WORKSPACES_DIR,
+			redisStatus,
+			queueLength,
 			tokens
 		});
 	} catch (err: any) {

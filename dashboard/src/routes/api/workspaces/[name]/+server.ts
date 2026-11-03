@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import util from 'util';
 import path from 'path';
 import fs from 'fs';
+import { isWorkspaceLocked } from '$lib/queue';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
@@ -24,6 +25,7 @@ export const GET: RequestHandler = async ({ params }) => {
 		const untrackedCount = statusLines.filter(l => l.startsWith('??')).length;
 		
 		const files = fs.readdirSync(target);
+		const lock = await isWorkspaceLocked(params.name);
 
 		return json({
 			name: params.name,
@@ -34,7 +36,8 @@ export const GET: RequestHandler = async ({ params }) => {
 			untrackedCount,
 			rawStatus: status.trim() || 'Clean',
 			recentCommits: recentLogs.trim().split('\n').filter(Boolean),
-			files
+			files,
+			isLocked: lock.locked
 		});
 	} catch (err: any) {
 		return json({ error: err.message }, { status: 500 });
@@ -47,6 +50,15 @@ export const DELETE: RequestHandler = async ({ params }) => {
 		if (!wsName || wsName === '.' || wsName === '..') {
 			return json({ error: 'Invalid workspace name' }, { status: 400 });
 		}
+
+		const lock = await isWorkspaceLocked(wsName);
+		if (lock.locked) {
+			return json(
+				{ error: `Cannot delete workspace '${wsName}': A task (${lock.taskId}) is currently running in this workspace.` },
+				{ status: 409 }
+			);
+		}
+
 		const target = path.join(WORKSPACES_DIR, wsName);
 		if (!fs.existsSync(target)) {
 			return json({ error: 'Workspace not found' }, { status: 404 });

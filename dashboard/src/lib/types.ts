@@ -22,6 +22,8 @@ export interface SystemStatus {
 	nodeVersion: string;
 	codexVersion: string;
 	tokens?: TokenStats;
+	redisStatus?: string;
+	queueLength?: number;
 }
 
 export interface WorkspaceDetails {
@@ -34,6 +36,15 @@ export interface WorkspaceDetails {
 	rawStatus: string;
 	recentCommits: string[];
 	files: string[];
+	isLocked?: boolean;
+}
+
+export interface TestEvidence {
+	ran: boolean;
+	passed: boolean;
+	testCmd: string;
+	output: string;
+	error?: string;
 }
 
 export interface TaskResult {
@@ -43,6 +54,7 @@ export interface TaskResult {
 	diff: string;
 	logs: string;
 	tokens?: TokenUsage;
+	testEvidence?: TestEvidence;
 }
 
 export interface ConsensusData {
@@ -51,7 +63,10 @@ export interface ConsensusData {
 	codexReviewOfDeepSeek: string;
 	deepseekReviewOfCodex: string;
 	finalSolution: TaskResult;
+	testEvidence?: TestEvidence;
 }
+
+export type TaskJobStatus = 'queued' | 'running' | 'validating' | 'completed' | 'failed' | 'cancelled';
 
 export interface TaskRecord {
 	id: string;
@@ -69,6 +84,8 @@ export interface TaskRecord {
 	codex?: TaskResult;
 	deepseek?: TaskResult;
 	consensus?: ConsensusData;
+	testEvidence?: TestEvidence;
+	jobStatus?: TaskJobStatus;
 }
 
 export function fmtTokens(n: number | undefined | null): string {
@@ -184,4 +201,3 @@ export interface AIModelConfig {
 	inConsensus: boolean;
 	isBuiltin?: boolean;
 }
-
