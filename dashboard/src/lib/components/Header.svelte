@@ -12,9 +12,20 @@
 
 	let { activeWs, status, tokenStats, onOpenSettings }: Props = $props();
 
+	let isRedisOnline = $derived(status?.redisStatus === 'online');
 	let queueWait = $derived(status?.queueLength ?? 0);
 	let queueRun = $derived(status?.processingCount ?? 0);
-	let isBusy = $derived(queueWait > 0 || queueRun > 0);
+	let isBusy = $derived(isRedisOnline && (queueWait > 0 || queueRun > 0));
+
+	let diskPctNum = $derived.by(() => {
+		const raw = status?.diskPercent || '';
+		const n = parseInt(raw.replace('%', ''), 10);
+		return Number.isFinite(n) ? n : 0;
+	});
+
+	let diskColorClass = $derived(
+		diskPctNum >= 90 ? 'text-rose-400' : diskPctNum >= 75 ? 'text-amber-300' : 'text-emerald-400'
+	);
 </script>
 
 <header class="border-b border-zinc-800 bg-zinc-950 px-4 sm:px-5 py-2.5 flex items-center justify-between gap-3 text-xs flex-wrap">
@@ -38,26 +49,30 @@
 			<span>KMITL GPU (14b)</span>
 		</div>
 
-		<!-- Live Redis Queue Status (คิวรอ + กำลังรัน) -->
+		<!-- Live Redis Queue Status (คิวรอ + กำลังรัน in-flight) -->
 		<div 
-			class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition {status?.redisStatus === 'online' ? (isBusy ? 'bg-amber-950/50 border-amber-600/60 text-amber-200' : 'bg-zinc-900 border-zinc-800 text-cyan-300') : 'bg-zinc-900 border-zinc-800 text-zinc-500'}"
-			title="สถานะ Redis Queue ({status?.redisStatus || 'offline'}): คิวรอ {queueWait} งาน | กำลังประมวลผล {queueRun} งาน"
+			class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition {isRedisOnline ? (isBusy ? 'bg-amber-950/50 border-amber-600/60 text-amber-200' : 'bg-zinc-900 border-zinc-800 text-cyan-300') : 'bg-rose-950/30 border-rose-800/50 text-rose-300'}"
+			title={isRedisOnline ? `สถานะ Redis Queue (Online): คิวรอ ${queueWait} งาน | กำลังประมวลผล (in-flight) ${queueRun} งาน` : 'Redis Queue Offline — ไม่สามารถอ่านจำนวนคิวได้'}
 		>
-			<Layers class="w-3 h-3 {isBusy ? 'text-amber-400 animate-bounce' : status?.redisStatus === 'online' ? 'text-cyan-400' : 'text-zinc-600'}" />
+			<Layers class="w-3 h-3 {isBusy ? 'text-amber-400 animate-bounce' : isRedisOnline ? 'text-cyan-400' : 'text-rose-400'}" />
 			<span>คิว:</span>
-			<strong class={queueWait > 0 ? 'text-amber-300' : 'text-zinc-200'}>{queueWait} รอ</strong>
-			<span class="text-zinc-600">·</span>
-			<strong class={queueRun > 0 ? 'text-emerald-400 animate-pulse' : 'text-zinc-400'}>{queueRun} รัน</strong>
+			{#if isRedisOnline}
+				<strong class={queueWait > 0 ? 'text-amber-300' : 'text-zinc-200'}>{queueWait} รอ</strong>
+				<span class="text-zinc-600">·</span>
+				<strong class={queueRun > 0 ? 'text-emerald-400 animate-pulse' : 'text-zinc-400'}>{queueRun} รัน</strong>
+			{:else}
+				<strong class="text-rose-400">Offline</strong>
+			{/if}
 		</div>
 
-		<!-- Remaining Disk Space (พื้นที่ที่เหลือ) -->
+		<!-- Remaining Disk Space (พื้นที่ดิสก์ที่เหลือใน Workspaces) -->
 		<div 
 			class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-200"
-			title="พื้นที่ดิสก์ Proxmox CT (/): เหลือว่าง {status?.diskFree || '...'} | ใช้ไป {status?.diskUsage || '...'}"
+			title="พื้นที่ดิสก์ Workspaces (/opt/agent-bridge/workspaces): เหลือว่าง {status?.diskFree || 'N/A'} | ใช้ไป {status?.diskUsage || 'N/A'}"
 		>
-			<HardDrive class="w-3 h-3 text-emerald-400 shrink-0" />
+			<HardDrive class="w-3 h-3 {diskColorClass} shrink-0" />
 			<span class="text-zinc-400">พท.เหลือ:</span>
-			<strong class="text-emerald-400">{status?.diskFree || '...'}</strong>
+			<strong class={diskColorClass}>{status?.diskFree || '...'}</strong>
 			{#if status?.diskPercent}
 				<span class="text-[10px] text-zinc-500">(ใช้ {status.diskPercent})</span>
 			{/if}
@@ -78,7 +93,7 @@
 			{@const netTok = tokenStats.netTokens ?? Math.max(0, (tokenStats.totalTokens || 0) - (tokenStats.cachedTokens || 0))}
 			<div 
 				class="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300"
-				title="Net Tokens (ใช้จริงไม่รวม Cache): {fmtTokens(netTok)} | Total (รวม Cache): {fmtTokens(tokenStats.totalTokens)} | Cached: {fmtTokens(tokenStats.cachedTokens)}"
+				title="Net Tokens (หัก Cached Input แล้ว): {fmtTokens(netTok)} | Total (รวม Cache): {fmtTokens(tokenStats.totalTokens)} | Cached: {fmtTokens(tokenStats.cachedTokens)}"
 			>
 				<span class="text-zinc-400">Net Tok:</span>
 				<strong class="text-emerald-400">{fmtTokens(netTok)}</strong>

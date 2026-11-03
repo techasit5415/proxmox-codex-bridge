@@ -9,7 +9,16 @@ import { getRedisClient, isRedisConnected } from '$lib/queue';
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
 
+let cachedTokenStats: any = null;
+let cachedTokenStatsAt = 0;
+let cachedStaticVersions: { nodeVer: string; codexVer: string } | null = null;
+
 function getSessionTokens() {
+	const now = Date.now();
+	if (cachedTokenStats && now - cachedTokenStatsAt < 10000) {
+		return cachedTokenStats;
+	}
+
 	const baseDir = '/root/.codex/sessions';
 	if (!fs.existsSync(baseDir)) {
 		return {
@@ -77,7 +86,7 @@ function getSessionTokens() {
 
 	const netTokens = Math.max(0, totalTokens - cachedTokens);
 
-	return {
+	cachedTokenStats = {
 		totalTokens,
 		netTokens,
 		inputTokens,
@@ -86,42 +95,71 @@ function getSessionTokens() {
 		sessionCount,
 		latest: latest || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, net_tokens: 0 }
 	};
+	cachedTokenStatsAt = now;
+	return cachedTokenStats;
 }
 
 export const GET: RequestHandler = async () => {
 	try {
 		const isAuthed = fs.existsSync('/root/.codex/auth.json');
-		const { stdout: dfRaw } = await execAsync("df -h / | awk 'NR==2 {print $3 \"|\" $2 \"|\" $4 \"|\" $5}'");
-		const [diskUsed = '0G', diskTotal = '0G', diskFree = '0G', diskPercent = '0%'] = dfRaw.trim().split('|');
-		const diskUsage = `${diskUsed} / ${diskTotal} (${diskPercent})`;
 
-		const { stdout: mem } = await execAsync("free -h | awk 'NR==2 {print $3 \" / \" $2}'");
-		const { stdout: nodeVer } = await execAsync('node -v');
-		const { stdout: codexVer } = await execAsync('codex --version 2>/dev/null || echo "codex-cli"');
+		let diskUsage = 'N/A';
+		let diskFree = 'N/A';
+		let diskPercent = '';
+		try {
+			const targetDiskPath = fs.existsSync(WORKSPACES_DIR) ? WORKSPACES_DIR : '/';
+			const { stdout: dfRaw } = await execAsync(`df -h "${targetDiskPath}" | awk 'NR==2 {print $3 "|" $2 "|" $4 "|" $5}'`, { timeout: 3000 });
+			const parts = dfRaw.trim().split('|');
+			if (parts.length >= 4) {
+				const [diskUsed, diskTotal, freeVal, pctVal] = parts;
+				diskFree = freeVal || 'N/A';
+				diskPercent = pctVal || '';
+				diskUsage = `${diskUsed} / ${diskTotal} (${diskPercent})`;
+			}
+		} catch (e) {}
+
+		let memoryUsage = 'N/A';
+		try {
+			const { stdout: mem } = await execAsync("free -h | awk 'NR==2 {print $3 \" / \" $2}'", { timeout: 3000 });
+			memoryUsage = mem.trim() || 'N/A';
+		} catch (e) {}
+
+		if (!cachedStaticVersions) {
+			try {
+				const { stdout: nodeVer } = await execAsync('node -v', { timeout: 3000 });
+				const { stdout: codexVer } = await execAsync('codex --version 2>/dev/null || echo "codex-cli"', { timeout: 3000 });
+				cachedStaticVersions = { nodeVer: nodeVer.trim(), codexVer: codexVer.trim() };
+			} catch {
+				cachedStaticVersions = { nodeVer: process.version, codexVer: 'codex-cli' };
+			}
+		}
+
 		const tokens = getSessionTokens();
 
 		let redisStatus = 'offline';
-		let queueLength = 0;
-		let processingCount = 0;
+		let queueLength: number | null = null;
+		let processingCount: number | null = null;
 		try {
 			const connected = await isRedisConnected();
 			if (connected) {
 				redisStatus = 'online';
 				const redis = getRedisClient();
-				queueLength = await redis.llen('tasks:queue');
-				processingCount = await redis.llen('tasks:processing');
+				// Atomic pipeline snapshot so in-flight transition is not double-counted
+				const multiRes = await redis.multi().llen('tasks:queue').llen('tasks:processing').exec();
+				queueLength = typeof multiRes?.[0]?.[1] === 'number' ? (multiRes[0][1] as number) : 0;
+				processingCount = typeof multiRes?.[1]?.[1] === 'number' ? (multiRes[1][1] as number) : 0;
 			}
 		} catch (e) {}
 
 		return json({
 			status: 'online',
 			codexAuth: isAuthed ? 'ChatGPT Plus' : 'Not Connected',
-			codexVersion: codexVer.trim(),
-			nodeVersion: nodeVer.trim(),
+			codexVersion: cachedStaticVersions.codexVer,
+			nodeVersion: cachedStaticVersions.nodeVer,
 			diskUsage,
 			diskFree,
 			diskPercent,
-			memoryUsage: mem.trim(),
+			memoryUsage,
 			workspacesDir: WORKSPACES_DIR,
 			redisStatus,
 			queueLength,

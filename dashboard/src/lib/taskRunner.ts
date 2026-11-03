@@ -447,6 +447,8 @@ export function isSafePublicUrl(urlStr: string): boolean {
 			host === '0.0.0.0' ||
 			host === '::1' ||
 			host.endsWith('.local') ||
+			host.endsWith('.internal') ||
+			host.endsWith('.localhost') ||
 			host.startsWith('10.') ||
 			host.startsWith('192.168.') ||
 			host.startsWith('169.254.') ||
@@ -674,13 +676,13 @@ export async function prefetchPromptWebUrls(
  * Enforces path containment and realpath symlink checks.
  */
 export function safeReadWorkspaceFile(runDir: string, relFilePath: string, maxChars = 4500): string {
-	if (!relFilePath || typeof relFilePath !== 'string') return '[Error: file path is required]';
-	const cleanRel = relFilePath.trim().replace(/^['"`]+|['"`]+$/g, '').replace(/^\/+/, '');
+	const rawInput = typeof relFilePath === 'string' ? relFilePath : '';
+	const cleanRel = rawInput.trim().replace(/^['"`]+|['"`]+$/g, '').replace(/^\/+/, '') || '.';
 	const root = path.resolve(runDir);
 	const target = path.resolve(root, cleanRel);
 	const rel = path.relative(root, target);
 
-	if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || rel.startsWith('../') || path.isAbsolute(rel)) {
+	if (rel === '..' || rel.startsWith(`..${path.sep}`) || rel.startsWith('../') || path.isAbsolute(rel)) {
 		return `[Error: Access denied — path '${cleanRel}' is outside workspace]`;
 	}
 	if (!fs.existsSync(target)) {
@@ -690,12 +692,12 @@ export function safeReadWorkspaceFile(runDir: string, relFilePath: string, maxCh
 		const realRoot = fs.realpathSync(root);
 		const realTarget = fs.realpathSync(target);
 		const realRel = path.relative(realRoot, realTarget);
-		if (!realRel || realRel === '..' || realRel.startsWith(`..${path.sep}`) || realRel.startsWith('../') || path.isAbsolute(realRel)) {
+		if (realRel === '..' || realRel.startsWith(`..${path.sep}`) || realRel.startsWith('../') || path.isAbsolute(realRel)) {
 			return `[Error: Access denied — symlink escape detected for '${cleanRel}']`;
 		}
 		const stat = fs.statSync(realTarget);
 		if (stat.isDirectory()) {
-			const entries = fs.readdirSync(realTarget).slice(0, 60);
+			const entries = fs.readdirSync(realTarget).filter(e => e !== '.git' && e !== '.worktrees').slice(0, 60);
 			return `Directory '${cleanRel}' contents:\n` + entries.join('\n');
 		}
 		const content = fs.readFileSync(realTarget, 'utf8');
@@ -987,11 +989,14 @@ ${toolInstructions}`;
 		finalReply = step.reply;
 
 		// Check if DeepSeek invoked any [TOOL:...] commands
-		const toolRegex = /\[TOOL:(READ_FILE|LIST_FILES|WEB_SEARCH|FETCH_URL)\]\s*([^\r\n]+)/gi;
+		const toolRegex = /\[TOOL:(READ_FILE|LIST_FILES|WEB_SEARCH|FETCH_URL)\][ \t]*([^\r\n]*)/gi;
 		const toolCalls: Array<{ type: string; arg: string }> = [];
 		let tMatch;
 		while ((tMatch = toolRegex.exec(step.reply)) !== null && toolCalls.length < 4) {
-			toolCalls.push({ type: tMatch[1].toUpperCase(), arg: tMatch[2].trim() });
+			const tType = tMatch[1].toUpperCase();
+			const tArg = (tMatch[2] || '').trim();
+			if (tType !== 'LIST_FILES' && !tArg) continue;
+			toolCalls.push({ type: tType, arg: tArg || '.' });
 		}
 
 		// If no tool calls or last turn, we are done!

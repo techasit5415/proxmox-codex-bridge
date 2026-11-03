@@ -27,8 +27,8 @@ export interface SystemStatus {
 	codexVersion: string;
 	tokens?: TokenStats;
 	redisStatus?: string;
-	queueLength?: number;
-	processingCount?: number;
+	queueLength?: number | null;
+	processingCount?: number | null;
 }
 
 export interface WorkspaceDetails {
