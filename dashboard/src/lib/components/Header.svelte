@@ -8,9 +8,10 @@
 		status: SystemStatus | null;
 		tokenStats: TokenStats | null;
 		onOpenSettings?: () => void;
+		onOpenQueue?: () => void;
 	}
 
-	let { activeWs, status, tokenStats, onOpenSettings }: Props = $props();
+	let { activeWs, status, tokenStats, onOpenSettings, onOpenQueue }: Props = $props();
 
 	let isRedisOnline = $derived(status?.redisStatus === 'online');
 	let queueWait = $derived(status?.queueLength ?? 0);
@@ -49,10 +50,12 @@
 			<span>KMITL GPU (14b)</span>
 		</div>
 
-		<!-- Live Redis Queue Status (คิวรอ + กำลังรัน in-flight) -->
-		<div 
-			class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition {isRedisOnline ? (isBusy ? 'bg-amber-950/50 border-amber-600/60 text-amber-200' : 'bg-zinc-900 border-zinc-800 text-cyan-300') : 'bg-rose-950/30 border-rose-800/50 text-rose-300'}"
-			title={isRedisOnline ? `สถานะ Redis Queue (Online): คิวรอ ${queueWait} งาน | กำลังประมวลผล (in-flight) ${queueRun} งาน` : 'Redis Queue Offline — ไม่สามารถอ่านจำนวนคิวได้'}
+		<!-- Live Redis Queue Status (Clickable to inspect active/waiting jobs!) -->
+		<button 
+			type="button"
+			onclick={onOpenQueue}
+			class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer {isRedisOnline ? (isBusy ? 'bg-amber-950/60 hover:bg-amber-900/70 border-amber-500/70 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 hover:border-cyan-500/40 text-cyan-300') : 'bg-rose-950/30 border-rose-800/50 text-rose-300'}"
+			title={isRedisOnline ? `คลิกเพื่อเปิดดูรายละเอียดคิวงานสด (คิวรอ ${queueWait} งาน | กำลังรัน ${queueRun} งาน)` : 'Redis Queue Offline — คลิกเพื่อดูสถานะ'}
 		>
 			<Layers class="w-3 h-3 {isBusy ? 'text-amber-400 animate-bounce' : isRedisOnline ? 'text-cyan-400' : 'text-rose-400'}" />
 			<span>คิว:</span>
@@ -63,7 +66,7 @@
 			{:else}
 				<strong class="text-rose-400">Offline</strong>
 			{/if}
-		</div>
+		</button>
 
 		<!-- Remaining Disk Space (พื้นที่ดิสก์ที่เหลือใน Workspaces) -->
 		<div 

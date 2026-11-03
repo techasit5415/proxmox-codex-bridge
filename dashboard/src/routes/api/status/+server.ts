@@ -4,7 +4,7 @@ import { exec } from 'child_process';
 import util from 'util';
 import path from 'path';
 import fs from 'fs';
-import { getRedisClient, isRedisConnected } from '$lib/queue';
+import { getRedisClient, isRedisConnected, getActiveQueueJobs } from '$lib/queue';
 
 const execAsync = util.promisify(exec);
 const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
@@ -139,15 +139,15 @@ export const GET: RequestHandler = async () => {
 		let redisStatus = 'offline';
 		let queueLength: number | null = null;
 		let processingCount: number | null = null;
+		let activeJobs: any[] = [];
 		try {
 			const connected = await isRedisConnected();
 			if (connected) {
 				redisStatus = 'online';
-				const redis = getRedisClient();
-				// Atomic pipeline snapshot so in-flight transition is not double-counted
-				const multiRes = await redis.multi().llen('tasks:queue').llen('tasks:processing').exec();
-				queueLength = typeof multiRes?.[0]?.[1] === 'number' ? (multiRes[0][1] as number) : 0;
-				processingCount = typeof multiRes?.[1]?.[1] === 'number' ? (multiRes[1][1] as number) : 0;
+				const qInfo = await getActiveQueueJobs();
+				queueLength = qInfo.queueLength;
+				processingCount = qInfo.processingCount;
+				activeJobs = qInfo.activeJobs;
 			}
 		} catch (e) {}
 
@@ -164,6 +164,7 @@ export const GET: RequestHandler = async () => {
 			redisStatus,
 			queueLength,
 			processingCount,
+			activeJobs,
 			tokens
 		});
 	} catch (err: any) {

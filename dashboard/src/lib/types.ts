@@ -29,6 +29,7 @@ export interface SystemStatus {
 	redisStatus?: string;
 	queueLength?: number | null;
 	processingCount?: number | null;
+	activeJobs?: TaskJobData[];
 }
 
 export interface WorkspaceDetails {
@@ -81,11 +82,13 @@ export interface TaskJobData {
 	provider: string;
 	branch?: string;
 	status: TaskJobStatus;
+	stage?: string;
 	createdAt: number;
 	startedAt?: number;
 	completedAt?: number;
 	result?: any;
 	error?: string;
+	testEvidence?: TestEvidence;
 }
 
 export interface TaskRecord {

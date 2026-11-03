@@ -8,7 +8,8 @@
 		TaskResult, 
 		ConsensusData,
 		TokenStats,
-		AIModelConfig
+		AIModelConfig,
+		TaskJobData
 	} from '../lib/types';
 
 	import Header from '../lib/components/Header.svelte';
@@ -19,6 +20,7 @@
 	import ResultsViewer from '../lib/components/ResultsViewer.svelte';
 	import CloneModal from '../lib/components/CloneModal.svelte';
 	import SettingsModal from '../lib/components/SettingsModal.svelte';
+	import QueueModal from '../lib/components/QueueModal.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -29,6 +31,8 @@
 	let wsDetails = $state<WorkspaceDetails | null>(null);
 	let models = $state<AIModelConfig[]>([]);
 	let showSettingsModal = $state<boolean>(false);
+	let showQueueModal = $state<boolean>(false);
+	let currentEventSource: EventSource | null = null;
 
 	// History state
 	let history = $state<TaskRecord[]>(data.history || []);
@@ -244,6 +248,110 @@
 		fetchStatus();
 	}
 
+	function attachLiveJobStream(taskId: string, initialBadge = 'Queued in Redis Job Queue...') {
+		if (currentEventSource) {
+			currentEventSource.close();
+			currentEventSource = null;
+		}
+		isExecuting = true;
+		taskBadge = initialBadge;
+		taskBadgeType = 'running';
+
+		const eventSource = new EventSource('/api/task/' + taskId + '/events');
+		currentEventSource = eventSource;
+
+		eventSource.onmessage = async (e) => {
+			try {
+				const event = JSON.parse(e.data);
+				if (event.type === 'status') {
+					taskBadge = event.status === 'queued' ? 'Queued in Redis...' : 'Running on Proxmox...';
+					fetchStatus();
+				} else if (event.type === 'stage') {
+					taskBadge = event.stage;
+					fetchStatus();
+				} else if (event.type === 'done') {
+					eventSource.close();
+					if (currentEventSource === eventSource) currentEventSource = null;
+					taskBadge = 'Completed';
+					taskBadgeType = 'success';
+					isExecuting = false;
+
+					const result = event.result || {};
+					await fetchWorkspaces();
+
+					if (result.mode === 'consensus') {
+						consensusResult = result.consensus;
+						dualCodex = null;
+						dualDeepSeek = null;
+						singleResult = null;
+					} else if (result.mode === 'both') {
+						dualCodex = result.codex;
+						dualDeepSeek = result.deepseek;
+						consensusResult = null;
+						singleResult = null;
+					} else {
+						singleResult = result;
+						dualCodex = null;
+						dualDeepSeek = null;
+						consensusResult = null;
+					}
+
+					if (activeWs && activeWs !== 'all' && activeWs !== 'auto-temp') {
+						fetchWorkspaceDetails(activeWs);
+					}
+					fetchStatus();
+					await fetchHistory(false);
+				} else if (event.type === 'error') {
+					eventSource.close();
+					if (currentEventSource === eventSource) currentEventSource = null;
+					taskBadge = 'Failed: ' + (event.error || 'Execution error');
+					taskBadgeType = 'error';
+					isExecuting = false;
+					fetchStatus();
+				}
+			} catch (parseErr) {
+				console.error('SSE Parse Error:', parseErr);
+			}
+		};
+
+		eventSource.onerror = () => {
+			eventSource.close();
+			if (currentEventSource === eventSource) currentEventSource = null;
+			setTimeout(async () => {
+				await fetchHistory(true);
+				fetchStatus();
+				isExecuting = false;
+				taskBadge = 'Completed';
+				taskBadgeType = 'success';
+			}, 1500);
+		};
+	}
+
+	function handleWatchJob(job: TaskJobData) {
+		selectedTaskId = null;
+		prompt = job.prompt || '';
+		const p = (job.provider || '').toLowerCase();
+		if (p.includes('consensus')) provider = 'consensus';
+		else if (p === 'both' || p.includes('dual')) provider = 'both';
+		else if (p.includes('deepseek')) provider = 'deepseek';
+		else provider = 'codex';
+
+		attachLiveJobStream(job.id, job.stage || 'กำลังประมวลผลบน Proxmox...');
+	}
+
+	async function handleCancelQueueJob(taskId: string) {
+		try {
+			const res = await fetch(`/api/task/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+			const d = await res.json();
+			if (!d.success) {
+				alert(d.error || 'ไม่สามารถยกเลิกคิวได้');
+			}
+			await fetchStatus();
+		} catch (e: any) {
+			alert(e.message);
+		}
+	}
+
 	async function executeTask() {
 		if (!prompt.trim() || isExecuting) return;
 		isExecuting = true;
@@ -263,69 +371,9 @@
 			const d = await res.json();
 
 			if (res.status === 202 && d.taskId) {
-				taskBadge = 'Queued in Redis Job Queue...';
-				taskBadgeType = 'running';
-
-				const eventSource = new EventSource('/api/task/' + d.taskId + '/events');
-
-				eventSource.onmessage = async (e) => {
-					try {
-						const event = JSON.parse(e.data);
-						if (event.type === 'status') {
-							taskBadge = event.status === 'queued' ? 'Queued in Redis...' : 'Running on Proxmox...';
-						} else if (event.type === 'stage') {
-							taskBadge = event.stage;
-						} else if (event.type === 'done') {
-							eventSource.close();
-							taskBadge = 'Completed';
-							taskBadgeType = 'success';
-							isExecuting = false;
-
-							const result = event.result || {};
-							await fetchWorkspaces();
-
-							if (result.mode === 'consensus') {
-								consensusResult = result.consensus;
-								dualCodex = null;
-								dualDeepSeek = null;
-								singleResult = null;
-							} else if (result.mode === 'both') {
-								dualCodex = result.codex;
-								dualDeepSeek = result.deepseek;
-								consensusResult = null;
-								singleResult = null;
-							} else {
-								singleResult = result;
-								dualCodex = null;
-								dualDeepSeek = null;
-								consensusResult = null;
-							}
-
-							if (activeWs && activeWs !== 'all' && activeWs !== 'auto-temp') {
-								fetchWorkspaceDetails(activeWs);
-							}
-							fetchStatus();
-							await fetchHistory(false);
-						} else if (event.type === 'error') {
-							eventSource.close();
-							taskBadge = 'Failed: ' + (event.error || 'Execution error');
-							taskBadgeType = 'error';
-							isExecuting = false;
-						}
-					} catch (parseErr) {
-						console.error('SSE Parse Error:', parseErr);
-					}
-				};
-
-				eventSource.onerror = () => {
-					eventSource.close();
-					setTimeout(async () => {
-						await fetchHistory(true);
-						isExecuting = false;
-						taskBadge = 'Completed';
-						taskBadgeType = 'success';
-					}, 2000);
-				};
+				// Immediately refresh status so Queue badge & History top card appear with 0ms delay!
+				fetchStatus();
+				attachLiveJobStream(d.taskId, 'Queued in Redis Job Queue...');
 				return;
 			}
 
@@ -494,23 +542,22 @@
 
 		const statusInterval = setInterval(() => {
 			fetchStatus();
-		}, 5000);
+		}, 2500);
 
 		const historyInterval = setInterval(async () => {
-			if (!isExecuting) {
-				try {
-					const res = await fetch('/api/history?summary=true');
-					if (res.ok) {
-						const d = await res.json();
-						history = d.history || [];
-					}
-				} catch (e) {}
-			}
-		}, 5000);
+			try {
+				const res = await fetch('/api/history?summary=true');
+				if (res.ok) {
+					const d = await res.json();
+					history = d.history || [];
+				}
+			} catch (e) {}
+		}, 3000);
 
 		return () => {
 			clearInterval(statusInterval);
 			clearInterval(historyInterval);
+			if (currentEventSource) currentEventSource.close();
 		};
 	});
 </script>
@@ -522,6 +569,7 @@
 		{status} 
 		{tokenStats} 
 		onOpenSettings={() => (showSettingsModal = true)}
+		onOpenQueue={() => (showQueueModal = true)}
 	/>
 
 	<!-- Main Workspace Grid -->
@@ -540,13 +588,16 @@
 
 			<HistorySidebar 
 				{history} 
+				activeJobs={status?.activeJobs || []}
 				{selectedTaskId} 
 				isLoading={isLoadingHistory} 
 				{activeWs}
 				onSelectTask={selectHistoryTask} 
-				onRefresh={() => fetchHistory(false)} 
+				onRefresh={() => { fetchHistory(false); fetchStatus(); }} 
 				onClearWorkspaceFilter={() => selectWorkspace('all')}
 				onNewTask={clearSelectedTask}
+				onOpenQueue={() => (showQueueModal = true)}
+				onWatchJob={handleWatchJob}
 			/>
 
 			<QuickCommand 
@@ -602,5 +653,16 @@
 		{models} 
 		onClose={() => (showSettingsModal = false)} 
 		onModelsUpdated={fetchModels} 
+	/>
+
+	<!-- Live Queue Inspector Modal -->
+	<QueueModal
+		isOpen={showQueueModal}
+		activeJobs={status?.activeJobs || []}
+		redisStatus={status?.redisStatus}
+		onClose={() => (showQueueModal = false)}
+		onRefresh={fetchStatus}
+		onWatchJob={handleWatchJob}
+		onCancelJob={handleCancelQueueJob}
 	/>
 </div>

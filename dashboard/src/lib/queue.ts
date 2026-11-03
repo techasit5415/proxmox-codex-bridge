@@ -260,6 +260,96 @@ export async function getTask(taskId: string): Promise<TaskJobData | null> {
 }
 
 /**
+ * Retrieves an atomic snapshot of currently running (in-flight) and waiting (queued) jobs
+ * along with their full TaskJobData metadata (prompt, provider, workspace, stage, timestamps).
+ */
+export async function getActiveQueueJobs(): Promise<{
+	queueLength: number;
+	processingCount: number;
+	activeJobs: TaskJobData[];
+}> {
+	try {
+		const redis = getRedisClient();
+		const listRes = await redis
+			.multi()
+			.lrange('tasks:processing', 0, -1)
+			.lrange('tasks:queue', 0, -1)
+			.exec();
+
+		const processingIds: string[] = Array.isArray(listRes?.[0]?.[1]) ? (listRes[0][1] as string[]) : [];
+		// tasks:queue has newest at left (LPUSH) and oldest popped from right (BLMOVE RIGHT LEFT)
+		// Reverse queueIds so #1 in queue is the next to run!
+		const rawQueueIds: string[] = Array.isArray(listRes?.[1]?.[1]) ? (listRes[1][1] as string[]) : [];
+		const queueIds = [...rawQueueIds].reverse();
+
+		const allIds = [...processingIds, ...queueIds];
+		if (allIds.length === 0) {
+			return { queueLength: 0, processingCount: 0, activeJobs: [] };
+		}
+
+		const pipe = redis.multi();
+		for (const id of allIds) {
+			pipe.hget(`task:${id}`, 'data');
+		}
+		const dataRes = await pipe.exec();
+
+		const activeJobs: TaskJobData[] = [];
+		const seen = new Set<string>();
+		allIds.forEach((id, idx) => {
+			if (seen.has(id)) return;
+			seen.add(id);
+			const raw = dataRes?.[idx]?.[1];
+			if (typeof raw === 'string' && raw) {
+				try {
+					const parsed: TaskJobData = JSON.parse(raw);
+					if (processingIds.includes(id)) {
+						parsed.status = 'running';
+					} else {
+						parsed.status = 'queued';
+					}
+					activeJobs.push(parsed);
+				} catch {}
+			}
+		});
+
+		return {
+			queueLength: queueIds.length,
+			processingCount: processingIds.length,
+			activeJobs
+		};
+	} catch (e) {
+		return { queueLength: 0, processingCount: 0, activeJobs: [] };
+	}
+}
+
+/**
+ * Cancels a task that is currently waiting in tasks:queue.
+ */
+export async function cancelQueuedTask(taskId: string): Promise<boolean> {
+	try {
+		const redis = getRedisClient();
+		const removed = await redis.lrem('tasks:queue', 0, taskId);
+		if (removed > 0) {
+			const raw = await redis.hget(`task:${taskId}`, 'data');
+			if (raw) {
+				const job: TaskJobData = JSON.parse(raw);
+				job.status = 'cancelled';
+				job.completedAt = Date.now();
+				await redis.hset(`task:${taskId}`, {
+					status: 'cancelled',
+					data: JSON.stringify(job)
+				});
+			}
+			await publishTaskEvent(taskId, { type: 'error', status: 'cancelled', error: 'Task cancelled from queue by user' });
+			return true;
+		}
+		return false;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Scans tasks:processing for tasks left behind by an unexpected crash or container reboot.
  * Reconciles their status to 'failed' and clears them from tasks:processing.
  */
@@ -344,7 +434,13 @@ export function startTaskWorker() {
 				try {
 					// Run Pipeline with Event Streaming
 					const result = await executeTaskPipeline(job, async (event) => {
-						if (event.type === 'stage') job.stage = event.stage;
+						if (event.type === 'stage') {
+							job.stage = event.stage;
+							await redis.hset(`task:${taskId}`, {
+								status: 'running',
+								data: JSON.stringify(job)
+							}).catch(() => {});
+						}
 						await publishTaskEvent(taskId, event);
 					});
 

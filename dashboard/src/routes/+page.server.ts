@@ -6,7 +6,7 @@ const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
 
 export const load: PageServerLoad = async () => {
 	try {
-		const history = loadHistorySummaries(35);
+		const history = loadHistorySummaries(50);
 		let workspaces: string[] = [];
 		try {
 			if (fs.existsSync(WORKSPACES_DIR)) {
