@@ -340,7 +340,10 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			fs.existsSync(path.join(targetDir, 'test.py'));
 		if (hasPytest) {
 			try {
-				const { stdout, stderr } = await execAsync('pytest -q || python3 -m unittest discover', { cwd: targetDir, timeout: 45000, env: safeEnv });
+				const pyTestCmd = fs.existsSync(path.join(targetDir, 'tests'))
+					? 'pytest -q 2>/dev/null || python3 -m unittest discover -s tests -p "test*.py"'
+					: 'pytest -q 2>/dev/null || python3 -m unittest discover';
+				const { stdout, stderr } = await execAsync(pyTestCmd, { cwd: targetDir, timeout: 45000, env: safeEnv });
 				return {
 					ran: true,
 					passed: true,
