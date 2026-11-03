@@ -1,496 +1,528 @@
 # 🌉 Proxmox Codex Bridge & Multi-Agent Platform
 
-ระบบเชื่อมต่อและบริดจ์คำสั่งอัจฉริยะ (Multi-Agent Bridge) ที่ผสานพลังของ **Google Antigravity**, **OpenAI Codex (gpt-6.1-sol)** บน Proxmox LXC Container และ **DeepSeek R1 (14b GPU)** บน CS KMITL GPU Cluster ควบคุมการทำงานด้วย **PM2 Process Manager**, **Redis 7 Job Queue & Worker**, ระบบสตรีมมิ่งสด **Server-Sent Events (SSE)**, **Automated Evidence Test Gate**, และ Web Dashboard แบบ Real-time บน Svelte 5
+[![Node.js Version](https://img.shields.io/badge/Node.js-v22.23.4-green.svg)](https://nodejs.org/)
+[![Redis Version](https://img.shields.io/badge/Redis-7.0-red.svg)](https://redis.io/)
+[![Process Manager](https://img.shields.io/badge/Process-PM2-blue.svg)](https://pm2.keymetrics.io/)
+[![OpenAI Codex](https://img.shields.io/badge/Engine%201-Codex%20(gpt--6.1--sol)-orange.svg)](https://chatgpt.com/)
+[![DeepSeek R1](https://img.shields.io/badge/Engine%202-DeepSeek%20R1%20(14b%20GPU)-purple.svg)](https://aipass.cskmitl.com/)
+[![Security Audit](https://img.shields.io/badge/Security-Audit%20Hardened%20(P0%2FP1)-emerald.svg)](#-สถาปัตยกรรมความปลอดภัย-security-architecture--hardening)
 
-🌐 **Web Dashboard:** [http://192.168.5.159:3000](http://192.168.5.159:3000) (เข้าถึงผ่านเครือข่ายภายใน)
+ระบบเชื่อมต่อและบริดจ์คำสั่งอัจฉริยะ (Multi-Agent Orchestration Platform) ที่ผสานพลังระหว่าง **Google Antigravity** (บน Windows Host), **OpenAI Codex CLI (`gpt-6.1-sol`)** (บน Proxmox LXC Container) และ **DeepSeek R1 (14b GPU)** (บน CS KMITL AI GPU Cluster) ควบคุมการทำงานด้วย **PM2 Process Manager**, **Redis 7 Job Queue** (`BLMOVE`), ระบบสตรีมมิ่งสด **Server-Sent Events (SSE)**, **Automated Evidence Test Gate**, และ Web Dashboard แบบ Real-time บน Svelte 5
+
+🌐 **Web Dashboard:** [http://192.168.5.159:3000](http://192.168.5.159:3000) *(เข้าถึงผ่านเครือข่ายภายใน)*
+
+---
+
+> [!WARNING]
+> **ข้อควรระวังด้านความปลอดภัย:**
+> 1. AI Agents และ Test Runner มีความสามารถในการแก้ไขไฟล์และรันคำสั่งภายใต้สิทธิ์ของ Service User บนเซิร์ฟเวอร์
+> 2. แนะนำให้รันระบบบน **Unprivileged Proxmox LXC Container (`unprivileged: 1`)** เสมอ เพื่อจำกัดสิทธิ์ไม่ให้กระทบ Proxmox Host
+> 3. Git Worktrees ช่วยแยกชุดไฟล์ทดลอง แต่ไม่ใช่ Security Sandbox สำหรับโค้ดที่ไม่น่าไว้วางใจ
+> 4. การเปิดใช้งาน API ในเครือข่าย ควรตั้งค่า `BRIDGE_API_KEY` เพื่อบังคับตรวจสิทธิ์ Bearer Token ทุกครั้ง
 
 ---
 
 ## 📑 สารบัญ (Table of Contents)
-- [🏗️ สถาปัตยกรรมระบบ (System Architecture)](#️-สถาปัตยกรรมระบบ-system-architecture)
-- [🚀 ฟีเจอร์หลัก (Core Features)](#-ฟีเจอร์หลัก-core-features)
-- [🛡️ สถาปัตยกรรมความปลอดภัย (Security Architecture & Best Practices)](#️-สถาปัตยกรรมความปลอดภัย-security-architecture--best-practices)
-- [⚙️ คู่มือการจัดการระบบด้วย PM2 (PM2 Process Management)](#️-คู่มือการจัดการระบบด้วย-pm2-pm2-process-management)
-- [⚡ การทำงานของ Redis 7 Job Queue & Worker](#-การทำงานของ-redis-7-job-queue--worker)
-- [🛡️ Automated Evidence Test Gate (Evidence-Based Testing)](#️-automated-evidence-test-gate-evidence-based-testing)
-- [📡 Real-time SSE Streaming & Report Export](#-real-time-sse-streaming--report-export)
-- [1. 🧩 โครงสร้าง 11 Modular Components (Svelte 5 Runes)](#1--โครงสร้าง-11-modular-components-svelte-5-runes)
-- [2. 🗂️ ระบบ Auto Temp Workspace และ Safe Lease Guard](#2-️-ระบบ-auto-temp-workspace-และ-safe-lease-guard)
-- [3. 🎯 Task Intent Detection (Code vs General / Planning)](#3--task-intent-detection--code-vs--general--planning)
-- [4. 🛡️ กฎเหล็ก Anti-Hallucination & Multi-Agent Strict Policy](#4-️-กฎเหล็ก-anti-hallucination--multi-agent-strict-policy)
-- [5. 🌲 Dual Compare View & Git Worktree Isolation](#5--dual-compare-view--git-worktree-isolation)
-- [6. 🤝 Multi-Agent Consensus Loop (Bilateral Peer Review)](#6--multi-agent-consensus-loop-bilateral-peer-review)
-- [🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์ (Step-by-Step Installation)](#️-คู่มือการติดตั้งตั้งแต่ศูนย์-step-by-step-installation)
-- [⚡ การใช้งาน Permanent CLI Runner (scripts/ask_models.py)](#-การใช้งาน-permanent-cli-runner-scriptsask_modelspy)
-- [❓ คำถามที่พบบ่อย (FAQ)](#-คำถามที่พบบ่อย-faq)
-- [📝 บันทึกประวัติการพัฒนา (Changelog)](#-บันทึกประวัติการพัฒนา-changelog)
+
+1. [🧭 เลือกเส้นทางการอ่าน (Choose Your Path)](#1--เลือกเส้นทางการอ่าน-choose-your-path)
+2. [🏗️ สถาปัตยกรรมระบบ (System Architecture)](#2-️-สถาปัตยกรรมระบบ-system-architecture)
+3. [📋 ความต้องการของระบบและเวอร์ชันที่ทดสอบ (Requirements)](#3--ความต้องการของระบบและเวอร์ชันที่ทดสอบ-requirements)
+4. [🚀 เริ่มต้นใช้งานด่วน (Quick Start)](#4--เริ่มต้นใช้งานด่วน-quick-start)
+5. [🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์ (Step-by-Step Installation)](#5-️-คู่มือการติดตั้งตั้งแต่ศูนย์-step-by-step-installation)
+6. [⚙️ การตั้งค่าระบบและสภาพแวดล้อม (Configuration & .env)](#6-️-การตั้งค่าระบบและสภาพแวดล้อม-configuration---env)
+7. [🔑 คู่มือการเปลี่ยน Token และจัดการบัญชี (Token Rotation Guide)](#7--คู่มือการเปลี่ยน-token-และจัดการบัญชี-token-rotation-guide)
+8. [💻 คู่มือคำสั่ง CLI Runner (ask_models.py)](#8--คู่มือคำสั่ง-cli-runner-ask_modelspy)
+9. [📡 สัญญาการทำงานของ API และ SSE Streaming (API Specification)](#9--สัญญาการทำงานของ-api-และ-sse-streaming-api-specification)
+10. [🤖 โหมดการทำงานและระบบ Consensus (Execution Modes & Consensus)](#10--โหมดการทำงานและระบบ-consensus-execution-modes--consensus)
+11. [⚡ การทำงานของ Redis 7 Job Queue & Lease Guard](#11--การทำงานของ-redis-7-job-queue--lease-guard)
+12. [🛡️ ระบบตรวจสอบหลักฐานอัตโนมัติ (Automated Evidence Test Gate)](#12-️-ระบบตรวจสอบหลักฐานอัตโนมัติ-automated-evidence-test-gate)
+13. [🔒 สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)](#13--สถาปัตยกรรมความปลอดภัย-security-architecture--hardening)
+14. [⚙️ การบริหารจัดการด้วย PM2 (PM2 Operations)](#14-️-การบริหารจัดการด้วย-pm2-pm2-operations)
+15. [❓ ตารางวิเคราะห์และแก้ปัญหา (Troubleshooting Matrix)](#15--ตารางวิเคราะห์และแก้ปัญหา-troubleshooting-matrix)
+16. [📝 บันทึกประวัติการพัฒนา (Changelog)](#16--บันทึกประวัติการพัฒนา-changelog)
 
 ---
 
-## 🏗️ สถาปัตยกรรมระบบ (System Architecture)
+## 1. 🧭 เลือกเส้นทางการอ่าน (Choose Your Path)
+
+| กลุ่มผู้ใช้งาน | วัตถุประสงค์ | หัวข้อที่แนะนำให้อ่าน |
+|---|---|---|
+| **ผู้ใช้งานทั่วไป / นักพัฒนา** | มีระบบติดตั้งอยู่แล้ว ต้องการส่ง Prompt หรือใช้งานผ่าน CLI / Dashboard | [Quick Start](#4--เริ่มต้นใช้งานด่วน-quick-start) → [CLI Runner](#8--คู่มือคำสั่ง-cli-runner-ask_modelspy) → [Troubleshooting](#15--ตารางวิเคราะห์และแก้ปัญหา-troubleshooting-matrix) |
+| **ผู้ดูแลระบบ / DevOps** | ติดตั้งระบบใหม่ตั้งแต่ศูนย์ ตั้งค่า Proxmox, Redis, PM2, และเครือข่าย | [Requirements](#3--ความต้องการของระบบและเวอร์ชันที่ทดสอบ-requirements) → [Installation](#5-️-คู่มือการติดตั้งตั้งแต่ศูนย์-step-by-step-installation) → [PM2 Operations](#14-️-การบริหารจัดการด้วย-pm2-pm2-operations) |
+| **ความปลอดภัย / Security** | ตรวจสอบมาตรการป้องกัน, Token Isolation, Path Traversal, และ Process Group | [Security Architecture](#13--สถาปัตยกรรมความปลอดภัย-security-architecture--hardening) → [Token Rotation](#7--คู่มือการเปลี่ยน-token-และจัดการบัญชี-token-rotation-guide) |
+| **สถาปัตยกรรมซอฟต์แวร์** | ศึกษาระบบ Multi-Agent Consensus, Redis Atomic Queue, และ Real-time SSE | [System Architecture](#2-️-สถาปัตยกรรมระบบ-system-architecture) → [Redis 7 Queue](#11--การทำงานของ-redis-7-job-queue--lease-guard) → [Consensus](#10--โหมดการทำงานและระบบ-consensus-execution-modes--consensus) |
+
+---
+
+## 2. 🏗️ สถาปัตยกรรมระบบ (System Architecture)
 
 ```mermaid
-flowchart TD
-    User["👨‍💻 ผู้ใช้งาน / นักพัฒนา"] -->|CLI / Prompt| Antigravity["🛸 Antigravity (Coding Agent)"]
-    User -->|Direct Web UI| Dashboard["🌐 Web Dashboard (Port 3000)\nSvelte 5 + SvelteKit + Tailwind v4"]
-    
-    subgraph Antigravity_Config["Local Agent Customizations"]
-        GlobalRules["📜 Global Rules (~/.gemini/config/rules/)\n- Strict Anti-Hallucination\n- Auto Tool Routing"]
-        CLIHelper["⚡ Permanent CLI Runner\n(ask_models.py with SSE & Queue)"]
+flowchart TB
+    subgraph Client_Tier["Client Tier (Windows Host)"]
+        User["👨‍💻 Developer / User"]
+        AG["🛸 Google Antigravity"]
+        CLI["⚡ ask_models.py (Permanent CLI Runner)"]
+        Browser["🌐 Web Browser (Svelte 5 Dashboard)"]
+        User --> AG
+        User --> Browser
+        AG --> CLI
     end
-    Antigravity --- Antigravity_Config
-    
-    Dashboard -->|POST /api/task (202 Accepted)| Backend["⚡ SvelteKit Backend Server"]
-    CLIHelper -->|POST /api/task (202 Accepted)| Backend
-    
-    subgraph Proxmox_CT["Proxmox LXC Container (192.168.5.159)"]
-        subgraph PM2_Daemon["PM2 Process Manager"]
-            Backend
-            Worker["⚙️ Background Task Worker Loop"]
+
+    subgraph Proxmox_CT["Proxmox LXC Container (192.168.5.159 · Ubuntu 24.04 LTS)"]
+        subgraph PM2_Daemon["PM2 Process Manager (proxmox-codex-bridge)"]
+            API["⚡ SvelteKit SSR Backend (Port 3000)"]
+            Worker["⚙️ Dedicated Background Worker Loop"]
         end
 
-        subgraph Security_Shield["🛡️ Security & Isolation Shield"]
-            EnvSecrets[("🔒 .env File (chmod 600)\n(No Tokens in Git)")]
-            PathShield["🚫 Path Traversal Shield\n(Strict path.resolve)"]
-            AuthGuard["🔑 Optional Bearer Token Auth\n(BRIDGE_API_KEY)"]
+        subgraph Security_Shield["🛡️ Security & Isolation Shield (P0 & P1)"]
+            EnvSecrets[("🔒 /opt/agent-bridge/.env (chmod 600)\nZero-Token in Git")]
+            AuthHook["🔑 hooks.server.ts (OWASP Bearer Auth)"]
+            PathGuard["🚫 resolveSafeWorkspace (Path & Symlink Guard)"]
+            EnvSanitizer["🧹 getSanitizedEnv (No Token/SSH Leak)"]
+            ProcessGroup["🌲 Process Group Kill (kill -pid)"]
+            BufferGuard["🛡️ Anti-OOM 10MB Stream Buffer Cap"]
         end
-        
+
         subgraph Redis_Layer["Redis 7 Infrastructure"]
-            RedisQueue[("📥 tasks:queue\n(FIFO Task Queue)")]
-            RedisPubSub[("📡 task:events:id\n(PubSub Real-time SSE)")]
-            RedisLease[("🔒 workspace:lease\n(Concurrency Guard)")]
+            Q_Wait[("📥 tasks:queue (FIFO)")]
+            Q_Proc[("⚙️ tasks:processing (In-Flight)")]
+            Lease[("🔒 workspace:lease (TTL 15m + Heartbeat 30s)")]
+            PubSub[("📡 task:events:taskId (PubSub SSE)")]
         end
-        
+
+        subgraph Workspaces_FS["Filesystem (/opt/agent-bridge/workspaces/)"]
+            TargetWS["📁 Target Workspace"]
+            WorktreeCodex["🌲 .worktrees/codex (Isolated)"]
+            WorktreeDS["🌲 .worktrees/deepseek (Isolated)"]
+        end
+
         TestGate["🛡️ Automated Evidence Test Gate\n(npm test / pytest / syntax check)"]
-        Workspaces["📁 Workspaces & Auto-Temp (/opt/agent-bridge/workspaces/)"]
-        History["📜 tasks_history.json"]
-        
-        CodexEngine["🤖 Engine 1: OpenAI Codex CLI\n(gpt-6.1-sol, Dangerously Bypass Sandbox)"]
+        HistoryStore[("📜 tasks_history.json")]
+        CodexCLI["🤖 OpenAI Codex CLI\n(gpt-6.1-sol · Direct Stdin Pipe)"]
     end
 
-    subgraph GPU_Cluster["CS KMITL AI GPU Cluster"]
-        DeepSeekEngine["🧠 Engine 2: DeepSeek R1 14b\n(aipass.cskmitl.com NDJSON Stream)"]
+    subgraph External_Cloud["External AI Services"]
+        KMITL_GPU["🧠 CS KMITL AI GPU Cluster\n(DeepSeek R1 14b · NDJSON Stream)"]
+        OpenAI_OAuth["☁️ OpenAI Platform / ChatGPT Plus"]
     end
 
-    Backend -->|Enqueue Job| RedisQueue
-    Worker -->|BRPOP Job| RedisQueue
-    Worker -->|Acquire Lock| RedisLease
-    Worker -->|Publish Status/Logs| RedisPubSub
-    Worker -->|Execute| CodexEngine
-    Worker -->|Execute (Bearer from .env)| DeepSeekEngine
-    Worker -->|Run Verification| TestGate
-    Worker -->|Record| History
-    RedisPubSub -->|SSE Stream /api/task/id/events| Dashboard
-    RedisPubSub -->|SSE Stream /api/task/id/events| CLIHelper
+    %% Client communication
+    CLI -->|"POST /api/task (Bearer Auth)"| AuthHook
+    Browser -->|"POST /api/task (HTTP 202)"| AuthHook
+    AuthHook --> API
+    API --> PathGuard
+    PathGuard -->|"Enqueue taskId"| Q_Wait
+    API -->|"202 Accepted + taskId"| CLI
+    API -->|"202 Accepted + taskId"| Browser
+
+    %% Worker Execution
+    Q_Wait -->|"BLMOVE RIGHT LEFT 3 (Atomic)"| Q_Proc
+    Q_Proc --> Worker
+    Worker -->|"Acquire & Heartbeat Renewal"| Lease
+    Worker --> EnvSanitizer
+
+    %% Engine Calls
+    EnvSanitizer -->|"Direct Stdin Pipe (No Shell)"| CodexCLI
+    CodexCLI -.->|"OAuth Session"| OpenAI_OAuth
+    CodexCLI --> WorktreeCodex
+
+    Worker -->|"HTTPS NDJSON Stream"| KMITL_GPU
+    KMITL_GPU --> WorktreeDS
+
+    %% Verification & Completion
+    Worker --> TestGate
+    Worker --> HistoryStore
+    Worker -->|"Publish Status & Log Chunks"| PubSub
+    Worker -->|"Release Atomic Lua"| Lease
+    Worker -->|"LREM completed taskId"| Q_Proc
+
+    %% Real-time SSE streaming
+    PubSub -->|"GET /api/task/id/events"| Browser
+    PubSub -->|"GET /api/task/id/events"| CLI
 ```
 
 ---
 
-## 🚀 ฟีเจอร์หลัก (Core Features)
+## 3. 📋 ความต้องการของระบบและเวอร์ชันที่ทดสอบ (Requirements)
 
-| ฟีเจอร์ | รายละเอียด | สถานะ |
-| :--- | :--- | :---: |
-| **PM2 Process Manager** | ควบคุม Process ด้วย PM2 (`ecosystem.config.cjs`) มี Auto-restart, Memory Cap 600M, และ Structured Logs | ✅ ใช้งานจริง |
-| **Zero-Token Git Security** | ย้าย API Secrets ทั้งหมดไปที่ `.env` (chmod 600) ไม่ให้มี Token หลุดเข้า GitHub 100% | ✅ ใช้งานจริง |
-| **Path Traversal Protection** | ตรวจสอบเส้นทางโฟลเดอร์ด้วย `path.resolve` ห้ามเข้าถึงไฟล์ระบบนอก `workspaces/` | ✅ ใช้งานจริง |
-| **Redis 7 Job Queue & Worker** | จัดคิวงานแบบ Asynchronous (HTTP 202 + `taskId`) ควบคุมผ่าน Background Worker แยกจาก API Server | ✅ ใช้งานจริง |
-| **Server-Sent Events (SSE)** | สตรีมผลลัพธ์ สถานะคิว และขั้นตอนการทำงานแบบเรียลไทม์ผ่าน Redis PubSub | ✅ ใช้งานจริง |
-| **Automated Evidence Test Gate** | ตรวจสอบโค้ดอัตโนมัติด้วย Unit Test (`npm test`, `pytest`) หรือ Syntax Check ก่อนรับงาน | ✅ ใช้งานจริง |
-| **Safe Workspace Lease Check** | ล็อค Workspace ด้วย Redis Lease ป้องกันการลบ Temp Workspace ระหว่างมีงานรันอยู่ (409 Conflict) | ✅ ใช้งานจริง |
-| **Export Report System** | ดาวน์โหลดรายงานผลงานเป็น Markdown (.md), Git Patch (.patch) หรือ Audit JSON (.json) | ✅ ใช้งานจริง |
-| **11 Modular Components** | แยกโค้ดหน้าเว็บเป็น 11 คอมโพเนนต์อิสระบน Svelte 5 ด้วย Runes | ✅ ใช้งานจริง |
-| **Auto Temp Workspace** | สร้าง Workspace อัตโนมัติตามชื่อคำถาม (Slugify ภาษาไทย/อังกฤษ) | ✅ ใช้งานจริง |
-| **Safe Trash & Clean** | ปุ่มลบ Workspace รายตัว และปุ่มล้างโฟลเดอร์ Temp ทั้งหมด (พร้อมการตรวจจับ Active Locks) | ✅ ใช้งานจริง |
-| **Task Intent Detection** | จำแนก `💻 Code Task` vs `💡 General / Planning` อัตโนมัติ ป้องกัน Timeout | ✅ ใช้งานจริง |
-| **Anti-Hallucination Policy** | กฎเหล็กระดับระบบ ห้ามจำลองคำตอบ ต้องรันโมเดลจริงบนเซิร์ฟเวอร์เสมอ | ✅ ใช้งานจริง |
-| **Dual Compare View** | รัน 2 โมเดลพร้อมกัน เปรียบเทียบผลลัพธ์แบบ Side-by-Side | ✅ ใช้งานจริง |
-| **Git Worktree Isolation** | แยกพื้นที่ไฟล์ใน `.worktrees/` ขจัดปัญหา Race condition และ Branch collision 100% | ✅ ใช้งานจริง |
-| **Multi-Agent Consensus Loop** | ระบบทำงานร่วมกัน 3 ขั้นตอน: Proposals -> Cross Peer Review -> Master Harmonization | ✅ ใช้งานจริง |
+| ส่วนประกอบ | เวอร์ชันที่ทดสอบจริง | หน้าที่ในระบบ |
+|---|---|---|
+| **OS Host** | Windows 11 Pro | เครื่องพัฒนา ทำงานร่วมกับ Google Antigravity |
+| **Virtualization** | Proxmox VE 8.x | โฮสต์ควบคุมระบบ Virtualization |
+| **LXC Container** | Ubuntu 24.04 LTS (Unprivileged: 1) | สภาพแวดล้อมรัน Backend, Worker, Redis และ Codex CLI |
+| **Node.js** | v22.23.4 (LTS) | รัน SvelteKit Dashboard และ Worker Pipeline |
+| **Redis Server** | 7.0.15 (Port 6379) | จัดการ Job Queue (`BLMOVE`), PubSub (SSE), และ Lease Locks |
+| **Process Manager** | PM2 v5.4.3 | ควบคุมกระบวนการแบบ Daemon, Auto-restart, Memory Cap |
+| **Python** | 3.10+ / 3.12+ | รัน `ask_models.py` CLI Runner ฝั่ง Client |
+| **Git** | 2.43+ | จัดการ Version Control และ Git Worktree Isolation |
+| **Codex CLI** | v0.166.0 (OpenAI) | เชื่อมต่อ ChatGPT Plus โมเดล `gpt-6.1-sol` |
+| **DeepSeek Cluster** | CS KMITL AI GPU Cluster | ให้บริการ `deepseek-r1:14b` ผ่าน NDJSON Streaming |
 
 ---
 
-## 🛡️ สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)
+## 4. 🚀 เริ่มต้นใช้งานด่วน (Quick Start)
 
-ระบบได้รับการ Audit ซ้ำสองรอบโดย **ChatGPT (OpenAI Codex: `gpt-6.1-sol`)** และได้รับการปรับปรุงมาตรการความปลอดภัยและความเสถียรระดับ Production เต็มรูปแบบ ดังนี้:
+### กรณีที่ 1: ระบบได้รับการติดตั้งแล้ว (ผู้ใช้งานทั่วไป)
 
-### 1. การจัดการ Secrets & SSH Agent Isolation (`getSanitizedEnv`)
-* **ปัญหาเดิม:** การ Hardcode API Key หรือ Token ไว้ในซอร์สโค้ด เสี่ยงต่อการรั่วไหล และคำสั่ง `spawn`/`exec` มักสืบทอด `process.env` (รวมถึง `SSH_AUTH_SOCK` ที่ให้สิทธิ์ใช้ SSH Agent ของ Host)
-* **แนวทางแก้ไข:**
-  1. ไฟล์โค้ดทั้งหมดอ่านค่าผ่าน `process.env` โดยไม่มีการ Hardcode Key ใดๆ
-  2. ไฟล์ `.gitignore` บังคับห้ามติดตาม `.env` และ `.env.*` ทุกชนิด
-  3. บนเซิร์ฟเวอร์ Proxmox จะสร้างไฟล์ `/opt/agent-bridge/.env` กำหนดสิทธิ์เข้มงวด `chmod 600 /opt/agent-bridge/.env`
-  4. **Subprocess Environment Sanitization (`getSanitizedEnv`):** ระบบจะส่งเฉพาะตัวแปรระบบ allowlist ที่จำเป็น (`PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TERM`, `SHELL`, `TMPDIR`, `NODE_PATH`, `PYTHONPATH`) ให้กับ Child Process (Codex CLI, `npm test`, `pytest`, `git`) โดย **ตัด `BRIDGE_API_KEY`, `KMITL_TOKEN`, และ `SSH_AUTH_SOCK` ออกทั้งหมด** สกัดกั้นไม่ให้โค้ดที่ไม่น่าไว้วางใจใน Workspace สามารถขโมย Token หรือใช้ SSH Agent ของเครื่องโฮสต์ได้
+1. **ใช้งานผ่าน Web Dashboard:**
+   เปิด Browser ไปที่ [http://192.168.5.159:3000](http://192.168.5.159:3000)
+   - เลือก Workspace ที่ต้องการ หรือปล่อยเป็น `Auto Temp`
+   - เลือกโมเดลที่ต้องการรัน (`Codex`, `DeepSeek`, `Dual Mode`, หรือ `Consensus`)
+   - พิมพ์ข้อความสั่งงาน แล้วกด **Run Task**
 
-### 2. การป้องกัน Path Traversal & Symlink Escape (`resolveSafeWorkspace`)
-* **ปัญหาเดิม:** การตรวจสอบเฉพาะข้อความ `path.relative` ป้องกัน Traversal แบบ `../` ได้ แต่ไม่สามารถป้องกัน **Symlink Escape** (เช่น การสร้าง Symbolic Link ชี้ออกไปหา `/etc`)
-* **แนวทางแก้ไข:**
-  ใน `taskRunner.ts` และ API Routes ทุกตัว ใช้ฟังก์ชัน `resolveSafeWorkspace`:
-  ```typescript
-  export function resolveSafeWorkspace(workspaceName: string): string {
-    const cleanName = workspaceName.trim();
-    if (!cleanName || cleanName === '.' || cleanName === '..') {
-      throw new Error('Invalid workspace name: cannot be root or dot directory');
-    }
-    if (cleanName.includes('/') || cleanName.includes('\\')) {
-      throw new Error('Invalid workspace name: directory separators are forbidden');
-    }
-    const root = path.resolve(WORKSPACES_DIR);
-    const target = path.resolve(root, cleanName);
-    const rel = path.relative(root, target);
+2. **ใช้งานผ่าน CLI Runner บน Windows Host:**
+   เปิด PowerShell แล้วสั่งงานได้ทันที:
+   ```powershell
+   # สอบถามหรือสั่งงาน OpenAI Codex (ChatGPT Plus: gpt-6.1-sol)
+   python C:\Users\techa\.gemini\config\ask_models.py --codex "วิเคราะห์โค้ดในโปรเจกต์นี้"
 
-    if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || rel.startsWith('../') || path.isAbsolute(rel)) {
-      throw new Error('Forbidden workspace path: directory traversal detected');
-    }
+   # สั่งงาน DeepSeek R1 14b บน GPU Cluster
+   python C:\Users\techa\.gemini\config\ask_models.py --deepseek "เขียนฟังก์ชันคำนวณ Fibonacci แบบ DP"
 
-    // Canonical Filesystem Symlink Containment Check
-    if (fs.existsSync(target)) {
-      const realRoot = fs.realpathSync(root);
-      const realTarget = fs.realpathSync(target);
-      const realRel = path.relative(realRoot, realTarget);
-      if (realRel === '' || realRel === '..' || realRel.startsWith(`..${path.sep}`) || realRel.startsWith('../') || path.isAbsolute(realRel)) {
-        throw new Error('Forbidden workspace path: symlink escape detected');
-      }
-    }
-    return target;
-  }
-  ```
-
-### 3. การรันคำสั่งแบบ Stdin Pipe, Process Tree Kill และ Anti-OOM Buffering (`execCodexWithStdin`)
-* ไม่มีการเขียน Prompt ลงไฟล์ชั่วคราวบน `/tmp`
-* ใช้ `spawn('codex', [...], { shell: false, detached: true })` และส่ง Prompt ผ่าน `child.stdin.write(prompt)` 100%
-* **Process Tree Kill:** เมื่อเกิด Timeout หรือ Error ระบบจะส่งสัญญาณ `SIGTERM`/`SIGKILL` ไปยัง **Process Group (`process.kill(-child.pid)`)** กวาดล้างทั้งโปรเซสแม่และลูกหลาน (Grandchildren) ทั้งหมด ขจัดปัญหา Zombie Process
-* **Anti-OOM Buffer Protection:** จำกัดการสะสม Logs ไว้ที่สูงสุด 10MB (`MAX_OUTPUT_BYTES`) ป้องกันไม่ให้แอปพลิเคชันเกิด Out-of-Memory หากงานสร้าง Output ปริมาณมหาศาล
-
-### 4. การจัดการคิวแบบ Atomic Transition (`brpoplpush`) และ Lease Heartbeat
-* **Atomic Queue-to-Processing:** ใช้คำสั่ง `brpoplpush` สลับสถานะงานจาก `tasks:queue` เข้าสู่ `tasks:processing` แบบ Atomic 100% ขจัดช่องว่างที่งานจะสูญหายหาก Worker แครช
-* **Orphan Task Auto-Recovery (`recoverOrphanedTasks`):** เมื่อ Worker เริ่มทำงานใหม่ จะสแกน `tasks:processing` เพื่อปรับสถานะงานที่ค้างให้เป็น `failed` พร้อมบันทึกสาเหตุ
-* **Heartbeat Lease Renewal:** Worker ต่ออายุ TTL ทุกๆ 30 วินาทีอัตโนมัติตราบใดที่ Task ยังรันอยู่ และปลดล็อคด้วย **Atomic Lua Script** เมื่อเสร็จสิ้น
-
-### 5. มาตรฐาน Authentication แบบ OWASP (Bearer Header Only)
-* ใน `hooks.server.ts` หากกำหนด `BRIDGE_API_KEY` ในไฟล์ `.env`:
-  * บังคับส่งผ่าน **Header `Authorization: Bearer <token>` เท่านั้น**
-  * **ยกเลิกการรับ Key ผ่าน URL Query String (`?key=`)** ตามมาตรฐาน OWASP เพื่อป้องกันไม่ให้ความลับหลุดเข้าไปใน Access Logs หรือประวัติ Browser
-  * หากไม่ส่งหรือส่งไม่ถูกต้อง จะตอบ **HTTP 401 Unauthorized** ทันที
-
-### 6. คำแนะนำด้าน Sandbox & Proxmox VE
-* **Unprivileged Container:** สร้าง LXC Container ในโหมด **Unprivileged Container (`unprivileged: 1`)** เสมอ เพื่อให้สิทธิ์ `root` ใน Container เทียบเท่ากับ Non-root user บน Proxmox Host
-* **Resource Monitoring:** PM2 มี `max_memory_restart: '600M'` ป้องกัน Memory Leak ค้างในระบบ
+   # สั่งงานแบบ Consensus (Codex + DeepSeek ทำ Peer Review และ Harmonize ร่วมกัน)
+   python C:\Users\techa\.gemini\config\ask_models.py --consensus "ออกแบบ Database Schema สำหรับระบบ E-commerce"
+   ```
 
 ---
 
-## ⚙️ คู่มือการจัดการระบบด้วย PM2 (PM2 Process Management)
+## 5. 🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์ (Step-by-Step Installation)
 
-ระบบได้รับการตั้งค่าให้รันผ่าน **PM2** เพื่อความเสถียรระดับ Production (Auto-restart on crash, Logging, Memory Monitoring, Zero-downtime reload)
+### ขั้นตอนที่ 1: สร้าง Proxmox LXC Container
+1. ในหน้า Proxmox VE Web UI กด **Create CT**
+2. เลือก Template: `ubuntu-24.04-standard`
+3. ตั้งค่าระบบ:
+   - **General:** Uncheck `Privileged container` (ใช้ **Unprivileged Container** เพื่อความปลอดภัย)
+   - **Cores:** 2 ถึง 4 Cores
+   - **Memory:** 2048 MB (2 GB) ขึ้นไป
+   - **Disk:** 8 GB ถึง 16 GB
+   - **Network:** กำหนด Static IP (เช่น `192.168.5.159/24`, Gateway: `192.168.5.1`)
+4. สตาร์ท Container และเปิด Console
 
-### 1. โครงสร้างการตั้งค่า (`ecosystem.config.cjs`):
-```javascript
-module.exports = {
-  apps: [
-    {
-      name: 'proxmox-codex-bridge',
-      cwd: '/opt/agent-bridge/dashboard',
-      script: 'build/index.js',
-      instances: 1,
-      exec_mode: 'fork',
-      autorestart: true,
-      watch: false,
-      max_memory_restart: '600M',
-      env: {
-        NODE_ENV: 'production',
-        PORT: 3000,
-        HOST: '0.0.0.0',
-        REDIS_HOST: '127.0.0.1',
-        REDIS_PORT: 6379,
-        ...envConfig // โหลดจาก /opt/agent-bridge/.env อัตโนมัติ
-      },
-      error_file: '/opt/agent-bridge/logs/pm2-error.log',
-      out_file: '/opt/agent-bridge/logs/pm2-out.log',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      merge_logs: true
-    }
-  ]
-};
-```
-
-### 2. คำสั่ง PM2 ที่ใช้งานบ่อย:
+### ขั้นตอนที่ 2: ติดตั้ง Node.js, Redis, และเครื่องมือพื้นฐาน
+รันคำสั่งบน Proxmox Container:
 ```bash
-# ตรวจสอบสถานะการทำงาน
-pm2 status
-
-# ดู Logs สดของระบบ
-pm2 logs proxmox-codex-bridge
-
-# ดูเฉพาะ 50 บรรทัดล่าสุด
-pm2 logs proxmox-codex-bridge --lines 50 --nostream
-
-# รีสตาร์ทเซอร์วิสเมื่ออัปเดตโค้ด
-pm2 restart proxmox-codex-bridge
-
-# มอนิเตอร์ CPU, RAM และ Event Loop แบบ Interactive ใน Terminal
-pm2 monit
-
-# สั่งให้ PM2 จำสถานะปัจจุบันและเริ่มทำงานอัตโนมัติเมื่อเปิดเครื่อง
-pm2 save
-pm2 startup systemd -u root --hp /root
-```
-
----
-
-## ⚡ การทำงานของ Redis 7 Job Queue & Worker
-
-```text
-[Client / Dashboard / CLI]
-       │
-       ▼ (POST /api/task)
-[HTTP 202 Accepted] ──> คืนค่า { taskId, status: 'queued' } ทันที
-       │
-       ▼ LPUSH
-[Redis List: tasks:queue] 
-       │
-       ▼ BRPOP (Background Worker)
-[Task Worker Loop]
-   ├── 1. SET workspace:lease:<name> (ล็อคโฟลเดอร์ 15 นาที)
-   ├── 2. PUBLISH task:events:<id> (สตรีมสถานะ live ไปยัง SSE)
-   ├── 3. ประมวลผลโมเดล (Codex / DeepSeek / Consensus)
-   ├── 4. รัน Evidence Test Gate (Unit Test / Syntax Check)
-   ├── 5. บันทึกผลลง tasks_history.json และ Redis Hash
-   └── 6. DEL workspace:lease:<name> (ปลดล็อคโฟลเดอร์)
-```
-
----
-
-## 🛡️ Automated Evidence Test Gate (Evidence-Based Testing)
-
-เพื่อแก้ปัญหาที่โมเดลอาจเห็นพ้องต้องกันใน Consensus แต่โค้ดยังมีข้อผิดพลาด ระบบจึงติดตั้ง **Automated Evidence Test Gate (`runTestGate`)**:
-* **ตรวจจับ Test Framework อัตโนมัติ:**
-  * Node.js: ตรวจพบ `package.json` ที่มี script `"test"` $\rightarrow$ รัน `npm test`
-  * Python: ตรวจพบ `pytest.ini`, โฟลเดอร์ `tests/`, หรือ `test_*.py` $\rightarrow$ รัน `pytest -q` หรือ `python3 -m unittest`
-* **Fallback Syntax Verification:**  
-  หากโปรเจกต์ไม่มี Test Suite ระบบจะทำการตรวจสอบไวยากรณ์ (Syntax Check) เช่น `node --check` สำหรับ JavaScript และ `python3 -m py_compile` สำหรับ Python
-* **Test Evidence Card:** แสดงผลลัพธ์การทดสอบ (Passed/Failed พร้อม Command และ Output) ในหน้า Dashboard และแนบในรายงาน Audit Log
-
----
-
-## 📡 Real-time SSE Streaming & Report Export
-
-1. **Server-Sent Events (SSE):**  
-   Client สามารถเชื่อมต่อไปยัง `/api/task/{taskId}/events` เพื่อรับความคืบหน้าของคิวงาน, Stage การทำงาน และผลลัพธ์แบบสดผ่าน Redis PubSub
-2. **Report Export:**  
-   บน Web Dashboard ในหน้าผลลัพธ์ มีปุ่ม **Export** สำหรับดาวน์โหลด:
-   * **Markdown (.md):** สรุปรายงานการทำงาน พร้อม Test Gate Evidence, Diff และ Logs
-   * **Git Patch (.patch):** ไฟล์ Patch สำหรับนำไปใช้กับ `git apply`
-   * **Audit JSON (.json):** ข้อมูลดิบทั้งหมดสำหรับนำไปประมวลผลต่อในระบบ CI/CD
-
----
-
-## 1. 🧩 โครงสร้าง 11 Modular Components (Svelte 5 Runes)
-
-หน้าเว็บ Web Dashboard พัฒนาด้วย **Svelte 5 บน SvelteKit** และสไตล์ด้วย **Tailwind CSS v4** โดยแยกหน้าที่ออกเป็น 11 Modular Components ใน [`dashboard/src/lib/components/`](dashboard/src/lib/components/):
-
-```text
-dashboard/src/lib/components/
-├── Header.svelte             # แถบด้านบน แสดงสถานะเซิร์ฟเวอร์ โควต้า Token และ Redis Queue Status
-├── WorkspaceSidebar.svelte   # แถบด้านซ้าย จัดการ Workspace, Auto Temp และปุ่มลบ Trash
-├── HistorySidebar.svelte     # แถบประวัติงาน ค้นหาและกรองประวัติตาม Provider
-├── TaskInput.svelte          # กล่องรับ Prompt พร้อมป้าย Intent และตัวเลือก Model
-├── QuickCommand.svelte       # คอนโซลรันคำสั่ง Bash ด่วนใน Workspace ปัจจุบัน
-├── ResultsViewer.svelte      # ตัวจัดการแท็บ Response, Diff, Test Gate, Logs และ Export Report
-├── DualCompareView.svelte    # หน้าจอเปรียบเทียบผลลัพธ์ Codex vs DeepSeek คู่กัน
-├── SingleResultView.svelte   # หน้าจอแสดงผลลัพธ์ของโมเดลเดี่ยว
-├── DiffViewer.svelte         # แสดง Git diff ไฮไลต์โค้ดที่เปลี่ยนแปลง
-├── ChainOfThought.svelte     # การ์ดพับ/ขยายข้อความความคิด (<think>) ของ DeepSeek
-└── CloneModal.svelte         # ป๊อปอัปโคลน Git Repository เข้าสู่ Workspace
-```
-
----
-
-## 2. 🗂️ ระบบ Auto Temp Workspace และ Safe Lease Guard
-
-### 2.1 Auto Temp Workspace:
-* เมื่อเลือก workspace เป็น `Auto Temp` แล้วพิมพ์คำสั่ง ระบบจะนำข้อความ Prompt มาสร้างชื่อโฟลเดอร์อัตโนมัติ:
-  ```text
-  temp-<slug-ภาษาไทยหรืออังกฤษ>-<รหัสสุ่ม 4 ตัว>
-  ตัวอย่าง: temp-ping-test-anl7
-  ```
-* ระบบสร้างไฟล์ `README.md` และเริ่มต้น Git repository (`git init`) ให้พร้อมทำงานทันที
-
-### 2.2 การลบ Workspace (Workspace Clean & Safe Lease Guard):
-* **Safe Lease Guard:** ระบบจะตรวจสอบใน Redis ก่อนว่า Workspace นั้นกำลังมี Task สถานะ `running` อยู่หรือไม่ หากมี งานลบจะถูกปฏิเสธด้วยรหัส **HTTP 409 Conflict** ทันที เพื่อป้องกันข้อมูลสูญหาย
-* **Clean Temp:** ล้างโฟลเดอร์ `temp-*` ที่ไม่มี Task ใช้งานอยู่ทั้งหมดในคลิกเดียว
-
----
-
-## 3. 🎯 Task Intent Detection (Code vs General / Planning)
-
-ระบบติดตั้ง **Task Intent Classifier (`detectTaskType`)**:
-* **💻 Code Task:** ตรวจสอบไฟล์ในโปรเจกต์, สร้าง Branch, เขียนโค้ด, รัน Unit Test, สร้าง Git Diff
-* **💡 General / Planning:** ส่งคำแนะนำให้ตอบตรงประเด็นทันที ข้ามขั้นตอนค้นหาไฟล์ใน shell (ตอบเร็วขึ้นจาก 15 นาที เหลือเพียง 7 วินาที)
-
----
-
-## 4. 🛡️ กฎเหล็ก Anti-Hallucination & Multi-Agent Strict Policy
-
-1. **ห้าม Roleplay หรือกุเรื่องจำลองบทสนทนาเด็ดขาด:** AI ผู้ช่วยต้องไม่สมมุติตัวเองเป็น ChatGPT หรือ DeepSeek
-2. **เรียกใช้โมเดลจริงเสมอ:** เมื่อผู้ใช้สั่งงาน ระบบจะส่งผ่าน Proxmox Bridge ไปประมวลผลบนเครื่องจริงเท่านั้น
-3. **รายงานสถานะอย่างตรงไปตรงมา:** รายงานผลลัพธ์และข้อผิดพลาดที่เกิดขึ้นจริงเสมอ
-
----
-
-## 5. 🌲 Dual Compare View & Git Worktree Isolation
-
-* **Git Worktree Isolation:** ในการทำงานแบบขนาน (Dual Mode) ทั้งสองโมเดลจะไม่รันคำสั่งลงบน Root directory เดียวกัน แต่ระบบจะสร้าง Isolated Worktree ใน `.worktrees/codex-<id>` และ `.worktrees/deepseek-<id>`
-* เมื่อจบงาน ระบบจะบันทึก Commit ลง Git branch ของโมเดลนั้นๆ แล้ว Prune Worktree ออก คืนความสะอาดให้ Repository 100%
-
----
-
-## 6. 🤝 Multi-Agent Consensus Loop (Bilateral Peer Review)
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 👨‍💻 ผู้ใช้งาน
-    participant Orchestrator as ⚡ Bridge Orchestrator
-    participant Codex as 🤖 OpenAI Codex (gpt-6.1-sol)
-    participant DeepSeek as 🧠 DeepSeek R1 (14b GPU)
-    participant TestGate as 🛡️ Evidence Test Gate
-
-    User->>Orchestrator: สั่งงานในโหมด Consensus
-    Note over Orchestrator: Stage 1: Parallel Generation
-    par Worktree 1 (.worktrees/codex)
-        Orchestrator->>Codex: สร้าง Initial Solution A + Code Diff
-    and Worktree 2 (.worktrees/deepseek)
-        Orchestrator->>DeepSeek: สร้าง Initial Solution B + Code Diff
-    end
-
-    Note over Orchestrator: Stage 2: Bilateral Peer Review
-    par DeepSeek Audits Codex
-        Orchestrator->>DeepSeek: ส่ง Proposal A ให้ DeepSeek วิจารณ์จุดอ่อน & ช่องโหว่
-    and Codex Audits DeepSeek
-        Orchestrator->>Codex: ส่ง Proposal B ให้ Codex วิจารณ์สถาปัตยกรรม & Edge Cases
-    end
-
-    Note over Orchestrator: Stage 3: Consensus Harmonization
-    Orchestrator->>Codex: รวม Proposals และ Peer Reviews<br/>สังเคราะห์เป็น Master Consensus Solution
-    
-    Note over Orchestrator: Stage 4: Automated Evidence Test Gate
-    Orchestrator->>TestGate: รัน Unit Test / Syntax Check โค้ดที่ Harmonize แล้ว
-    TestGate-->>Orchestrator: บันทึกหลักฐาน Test Evidence (Passed/Failed)
-    
-    Orchestrator-->>User: บันทึกรายงาน Consensus + Test Gate + Git Diff + ประวัติงาน
-```
-
----
-
-## 🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์ (Step-by-Step Installation)
-
-### 1. เตรียมระบบบน Proxmox LXC Container (Ubuntu 24.04 LTS):
-```bash
-# อัปเดตแพ็กเกจ
 apt update && apt upgrade -y
+apt install -y curl git build-essential redis-server python3 python3-pip
 
-# ติดตั้ง Node.js v22 และเครื่องมือพื้นฐาน
+# ติดตั้ง Node.js 22.x
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt install -y nodejs git ripgrep curl build-essential
+apt install -y nodejs
 
-# ติดตั้ง Redis 7 และเปิดใช้งาน
-apt install -y redis-server
+# ติดตั้ง PM2 และ Codex CLI แบบ Global
+npm install -g pm2 @openai/codex
+
+# เปิดบริการ Redis Server
 systemctl enable --now redis-server
-redis-cli ping # ควรได้คำตอบ PONG
-
-# ติดตั้ง PM2 Process Manager แบบ Global
-npm install -g pm2
+redis-cli ping  # ผลลัพธ์ต้องตอบ PONG
 ```
 
-### 2. โคลนและตั้งค่าโปรเจกต์:
+### ขั้นตอนที่ 3: ติดตั้งโค้ดโปรเจกต์
 ```bash
 git clone https://github.com/techasit5415/proxmox-codex-bridge.git /opt/agent-bridge
 cd /opt/agent-bridge
-
-# สร้างโฟลเดอร์สำหรับ workspaces และ logs
 mkdir -p workspaces logs
 
-# สร้างไฟล์ความลับ .env จากตัวอย่าง
-cp .env.example .env
-chmod 600 .env
-
-# แก้ไขคีย์ API ใน .env (ใส่ Token จริงของคุณ)
-nano .env
-```
-
-### 3. บิลด์ Dashboard และรันด้วย PM2:
-```bash
-# ติดตั้ง dependencies และ build dashboard
+# ติดตั้ง Dependencies และ Build Dashboard
 cd /opt/agent-bridge/dashboard
 npm install
 npm run build
+```
 
-# สั่งเริ่มระบบด้วย PM2
+### ขั้นตอนที่ 4: สร้างไฟล์ Configuration `.env`
+สร้างไฟล์ความลับเฉพาะเครื่อง (ห้ามนำเข้า Git):
+```bash
+cat << 'EOF' > /opt/agent-bridge/.env
+PORT=3000
+HOST=0.0.0.0
+NODE_ENV=production
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+WORKSPACES_DIR=/opt/agent-bridge/workspaces
+KMITL_TOKEN=ใส่_token_ของ_cskmitl_ที่นี่
+# BRIDGE_API_KEY=ใส่_secret_key_หากต้องการบังคับ_auth
+EOF
+
+# กำหนดสิทธิ์เข้มงวด เฉพาะ root เท่านั้นที่อ่านได้
+chmod 600 /opt/agent-bridge/.env
+```
+
+### ขั้นตอนที่ 5: เริ่มต้นระบบด้วย PM2 และตั้งค่า Auto-start ตอนบูต
+```bash
 cd /opt/agent-bridge
 pm2 start ecosystem.config.cjs
-
-# ตั้งค่าให้เริ่มทำงานอัตโนมัติเมื่อเปิดเครื่อง
 pm2 save
-pm2 startup systemd -u root --hp /root
+pm2 startup systemd  # ทำตามคำสั่งที่ระบบแจ้งเพื่อผูกเข้า systemd boot
+```
+
+### ขั้นตอนที่ 6: ล็อกอิน OpenAI Codex CLI
+```bash
+codex login
+# เปิดลิงก์ URL ที่แสดงบนจอใน Browser เพื่อยืนยันสิทธิ์ ChatGPT Plus
+codex login status  # ตรวจสอบสถานะว่าแสดง Logged in
+```
+
+### ขั้นตอนที่ 7: ตั้งค่า CLI Runner บน Windows Host
+คัดลอกไฟล์ `scripts/ask_models.py` มาไว้ที่ `C:\Users\<username>\.gemini\config\ask_models.py` เพื่อให้ Antigravity และคุณเรียกใช้งานได้จากทุกที่
+
+---
+
+## 6. ⚙️ การตั้งค่าระบบและสภาพแวดล้อม (Configuration & .env)
+
+ไฟล์ `.env` จริงจะเก็บไว้ที่ `/opt/agent-bridge/.env` (และถูกละเว้นโดย `.gitignore` 100%):
+
+| ตัวแปร Environment | ค่าเริ่มต้น | ความจำเป็น | คำอธิบาย |
+|---|---|---|---|
+| `PORT` | `3000` | ตัวเลือก | พอร์ตที่ Web Dashboard ให้บริการ |
+| `HOST` | `0.0.0.0` | ตัวเลือก | ไอพีที่รับการเชื่อมต่อ (`0.0.0.0` สำหรับทุกอินเทอร์เฟซ) |
+| `NODE_ENV` | `production` | จำเป็น | โหมดการทำงานของ Node.js |
+| `REDIS_HOST` | `127.0.0.1` | จำเป็น | ที่อยู่ของ Redis Server |
+| `REDIS_PORT` | `6379` | จำเป็น | พอร์ตของ Redis Server |
+| `WORKSPACES_DIR` | `/opt/agent-bridge/workspaces` | จำเป็น | ไดเรกทอรีรากสำหรับเก็บไฟล์โค้ดของงานทั้งหมด |
+| `KMITL_TOKEN` | - | จำเป็น | Bearer Token สำหรับเข้าถึง CS KMITL AI GPU Cluster |
+| `BRIDGE_API_KEY` | *(ว่าง)* | ตัวเลือก | รหัสผ่านลับสำหรับครอบสิทธิ์ API (Bearer Authentication) |
+
+> [!NOTE]
+> ไฟล์ `ecosystem.config.cjs` จะอ่านไฟล์ `.env` เข้าหน่วยความจำของ PM2 ตอนเริ่มต้น Service โดยตรง หากมีการแก้ไขไฟล์ `.env` ให้สั่ง `pm2 restart proxmox-codex-bridge --update-env` เสมอ
+
+---
+
+## 7. 🔑 คู่มือการเปลี่ยน Token และจัดการบัญชี (Token Rotation Guide)
+
+### 7.1 วิธีเปลี่ยน `KMITL_TOKEN` (DeepSeek R1 GPU Cluster)
+1. SSH เข้าไปยัง Proxmox Container:
+   ```bash
+   ssh root@192.168.5.159
+   ```
+2. แก้ไขไฟล์ `.env`:
+   ```bash
+   nano /opt/agent-bridge/.env
+   ```
+   เปลี่ยนค่า `KMITL_TOKEN=gpu_token_ใหม่` แล้วกด `Ctrl + O` บันทึก และ `Ctrl + X` ออก
+3. สั่งให้ PM2 อัปเดต Environment ทันที:
+   ```bash
+   pm2 restart proxmox-codex-bridge --update-env
+   ```
+
+### 7.2 วิธีเปลี่ยนหรือตั้งค่า `BRIDGE_API_KEY` (API Authentication)
+1. แก้ไขไฟล์ `/opt/agent-bridge/.env`:
+   ```ini
+   BRIDGE_API_KEY=รหัสผ่านลับใหม่ที่คุณต้องการ
+   ```
+2. รีสตาร์ท PM2:
+   ```bash
+   pm2 restart proxmox-codex-bridge --update-env
+   ```
+3. บนเครื่อง Windows ตั้งค่า Environment Variable ใน PowerShell เพื่อให้ `ask_models.py` ใช้งานได้:
+   ```powershell
+   $env:BRIDGE_API_KEY="รหัสผ่านลับใหม่ที่คุณต้องการ"
+   ```
+
+### 7.3 วิธี Re-login / เปลี่ยนบัญชี OpenAI Codex (ChatGPT Plus)
+```bash
+ssh root@192.168.5.159
+codex logout
+codex login
+# ทำตามขั้นตอนบนหน้าจอเพื่อผูกบัญชี ChatGPT Plus ใหม่
+codex login status
 ```
 
 ---
 
-## ⚡ การใช้งาน Permanent CLI Runner (`scripts/ask_models.py`)
+## 8. 💻 คู่มือคำสั่ง CLI Runner (ask_models.py)
 
-สคริปต์ [`scripts/ask_models.py`](scripts/ask_models.py) เชื่อมต่อกับ Redis Job Queue และสตรีมความคืบหน้าผ่าน SSE ใน Terminal แบบเรียลไทม์:
+ไฟล์ `ask_models.py` รองรับการรับคำสั่งทั้งแบบข้อความตรงๆ หรือส่ง Path ของไฟล์ Text:
 
 ```bash
-# 1. สั่งงาน Consensus Loop พร้อมดูความคืบหน้าแบบสด
-python scripts/ask_models.py --consensus "ออกแบบระบบ Authentication ด้วย JWT ใน Node.js"
-
-# 2. รันเปรียบเทียบ Dual Mode (Codex vs DeepSeek)
-python scripts/ask_models.py --both "เขียน binary search ใน Go"
-
-# 3. สั่งงานเฉพาะ OpenAI Codex
-python scripts/ask_models.py --codex "refactor utils.ts"
-
-# 4. สั่งงานเฉพาะ DeepSeek R1
-python scripts/ask_models.py --deepseek "อธิบายความแตกต่างระหว่าง Process และ Thread"
+python scripts/ask_models.py [MODE] [--workspace NAME] [--sync] "<PROMPT หรือ PATH_TO_FILE>"
 ```
+
+### สรุปตัวเลือกคำสั่ง (CLI Flags)
+
+| Flag | คำอธิบาย | ตัวอย่างการใช้งาน |
+|---|---|---|
+| `--codex` | ส่งคำสั่งให้ **OpenAI Codex (`gpt-6.1-sol`)** เท่านั้น | `python ask_models.py --codex "สรุปหลักการ REST API"` |
+| `--deepseek` | ส่งคำสั่งให้ **DeepSeek R1 (14b GPU)** เท่านั้น | `python ask_models.py --deepseek "สร้าง Binary Search ใน Python"` |
+| `--both` | รันทั้งสองโมเดลพร้อมกันแบบขนาน (แยก Git Worktrees) | `python ask_models.py --both "เปรียบเทียบข้อดีของ Redis vs PostgreSQL"` |
+| `--consensus` | รันระบบ Multi-Agent Consensus (Bilateral Review + Harmonize) | `python ask_models.py --consensus "ออกแบบระบบ Notification System"` |
+| `--workspace` | กำหนดชื่อ Workspace ปลายทาง (หากไม่ระบุจะใช้ `auto-temp`) | `python ask_models.py --codex --workspace my-project "แก้ bug หน้า login"` |
+| `--sync` | รันแบบ Synchronous ตรง ไม่ผ่าน Redis Queue | `python ask_models.py --codex --sync "ทดสอบแบบด่วน"` |
 
 ---
 
-## ❓ คำถามที่พบบ่อย (FAQ)
+## 9. 📡 สัญญาการทำงานของ API และ SSE Streaming (API Specification)
 
-### Q1: ทำไมย้ายมาใช้ PM2 แทน Systemd เดี่ยวๆ?
-**A:** PM2 มอบการจัดการระดับ Application ที่สะดวกกว่ามาก ทั้งคำสั่ง `pm2 monit` ดูการใช้ CPU/RAM สด, ระบบหมุนเวียน Logs (`pm2 logs`), การจำกัดหน่วยความจำสูงสุด (`max_memory_restart`), และการรีโหลดโค้ดแบบไร้ช่วงสะดุด (Zero-downtime reload) ขณะที่ยังคงใช้ Systemd ผูกผ่าน `pm2 startup` เพื่อให้เปิดอัตโนมัติเมื่อบูตเครื่อง
+### 9.1 ส่งคำสั่งสร้างงาน (`POST /api/task`)
+- **Headers:** `Content-Type: application/json` และ `Authorization: Bearer <BRIDGE_API_KEY>` (หากเปิด Auth)
+- **Request Body:**
+  ```json
+  {
+    "provider": "codex",       // "codex" | "deepseek" | "both" | "consensus"
+    "prompt": "เนื้อหาคำสั่งงาน",
+    "workspace": "my-project"   // หรือ "auto-temp"
+  }
+  ```
+- **Response (HTTP 202 Accepted):**
+  ```json
+  {
+    "success": true,
+    "taskId": "task_1793698546996_4s7iu",
+    "status": "queued",
+    "message": "Task queued in Redis. Stream live updates at /api/task/task_1793698546996_4s7iu/events"
+  }
+  ```
 
-### Q2: หากต้องการเปลี่ยน Token ของ DeepSeek หรือเพิ่ม API Key อื่นๆ ต้องทำอย่างไร?
-**A:** แก้ไขไฟล์ `/opt/agent-bridge/.env` บน Proxmox Container ได้โดยตรง จากนั้นรันคำสั่ง:
+### 9.2 สตรีมผลลัพธ์สดเรียลไทม์ (`GET /api/task/[id]/events`)
+- **Format:** Server-Sent Events (`text/event-stream`)
+- **Event Types:**
+  - `status`: การเปลี่ยนสถานะของงาน (`queued` -> `running` -> `completed` / `failed`)
+  - `stage`: ขั้นตอนปัจจุบัน (เช่น `Executing Codex...`, `Running Evidence Test Gate...`)
+  - `log`: ข้อความ Log chunks แบบสด
+  - `done`: งานเสร็จสิ้น ส่งผลลัพธ์และ Test Evidence ทั้งหมด
+  - `error`: งานล้มเหลว พร้อมข้อความสาเหตุ
+
+---
+
+## 10. 🤖 โหมดการทำงานและระบบ Consensus (Execution Modes & Consensus)
+
+```mermaid
+flowchart LR
+    Task["🎯 User Task Prompt"] --> PropA["🤖 1. OpenAI Codex\nInitial Proposal A"]
+    Task --> PropB["🧠 2. DeepSeek R1\nInitial Proposal B"]
+
+    PropA --> RevA["🔄 DeepSeek Audits & Reviews\nCodex Proposal A"]
+    PropB --> RevB["🔄 Codex Audits & Reviews\nDeepSeek Proposal B"]
+
+    RevA --> Harm["🏆 Consensus Orchestrator\nHarmonizes Final Code"]
+    RevB --> Harm
+
+    Harm --> Gate["🛡️ Automated Evidence Test Gate\n(npm test / pytest / syntax)"]
+    Gate --> Output["📊 Comprehensive Report & Git Diff"]
+```
+
+1. **Phase 1: Dual Proposal Generation** — ทั้งสองโมเดลได้รับโจทย์เดียวกัน และคิดค้นวิธีการแก้ปัญหาอย่างอิสระบน Git Worktree ของตนเอง
+2. **Phase 2: Bilateral Cross Peer Review** — DeepSeek R1 ทำหน้าที่ Audit โค้ดของ Codex พร้อมชี้จุดบกพร่อง ในขณะที่ Codex ตรวจสอบโค้ดของ DeepSeek เพื่อหาช่องโหว่
+3. **Phase 3: Final Harmonization** — นำข้อเสนอแนะและจุดแข็งของทั้งสองฝั่งมาสังเคราะห์เป็นโค้ดสุดท้ายที่สมบูรณ์ที่สุด
+4. **Phase 4: Automated Test Gate** — ตรวจสอบความถูกต้องของโค้ดด้วย Test Suite หรือ Syntax Verification อัตโนมัติ
+
+---
+
+## 11. ⚡ การทำงานของ Redis 7 Job Queue & Lease Guard
+
+### 11.1 คำสั่ง Atomic Queue Transition (`BLMOVE`)
+ระบบใช้คำสั่งของ Redis 7 ในการส่งต่องานจากคิวรอไปสู่คิวกำลังประมวลผล:
+```redis
+BLMOVE tasks:queue tasks:processing RIGHT LEFT 3
+```
+- **ประโยชน์:** ปิดช่องว่างที่งานจะสูญหาย (Zero Crash Window) หาก Worker เกิดแครชระหว่างรับงาน งานจะไม่หลุดออกจากระบบ
+- **Crash Recovery (`recoverOrphanedTasks`):** เมื่อ Worker เริ่มทำงานใหม่ จะสแกน `tasks:processing` หากพบงานที่ไม่มี Lease ถือครองอยู่ จะปรับสถานะเป็น `failed` พร้อมระบุสาเหตุ เพื่อให้ระบบตรวจสอบย้อนหลังได้
+
+### 11.2 Workspace Lease Guard & Heartbeat Renewal
+- เมื่อเริ่มรันงาน ระบบจะสร้าง Lease Lock ใน Redis: `workspace:lease:<workspace_name>` ด้วยค่า TTL 15 นาที
+- **Heartbeat Renewal:** ระหว่างที่งานยังประมวลผลอยู่ Worker จะส่งคำสั่ง Lua Script ต่ออายุ TTL อัตโนมัติทุกๆ 30 วินาที ป้องกัน Lease หมดอายุระหว่างรันงานที่ซับซ้อน
+- **Atomic Release:** เมื่อเสร็จสิ้น จะปลดล็อคด้วย Atomic Lua Script ที่เปรียบเทียบ Token ป้องกันการลบ Lock ของผู้อื่น
+- **Safe Protection:** ปุ่ม Delete Workspace และ Clean Temp จะถูกบล็อคด้วยรหัส **HTTP 409 Conflict** ทันทีหาก Workspace นั้นมีงานรันอยู่
+
+---
+
+## 12. 🛡️ ระบบตรวจสอบหลักฐานอัตโนมัติ (Automated Evidence Test Gate)
+
+ระบบจะตรวจสอบโค้ดที่โมเดลแก้ไขโดยอัตโนมัติก่อนส่งมอบงาน:
+
+```markdown
+| ประเภทการตรวจ | คำสั่งที่ระบบเรียกใช้ | เกณฑ์การประเมิน |
+|---|---|---|
+| **Automated Test Suite** | `npm test` หรือ `pytest -q` / `python3 -m unittest` | รันชุดทดสอบจริง หาก Test ผ่านจะบันทึกสถานะ Test Gate: PASSED |
+| **Automated Syntax Verification** | `node --check <file>` หรือ `python3 -m py_compile <file>` | ตรวจสอบ Syntax และไวยากรณ์ของโค้ดที่ถูกแก้ ไม่แสดงอ้างว่าผ่าน Unit Tests |
+| **Not Detected / Clean** | ไม่มีไฟล์ Script ทดสอบใน Workspace | แสดงสถานะ No test suite detected ชัดเจน |
+```
+
+- ผลลัพธ์การทดสอบจะถูกแนบเป็นหลักฐาน (Command, Output, Exit Code) ใน Web Dashboard และรายงานส่งออก
+
+---
+
+## 13. 🔒 สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)
+
+ระบบได้รับการ Audit ซ้ำ 3 รอบโดย **ChatGPT (`gpt-6.1-sol`)** และได้รับการปรับปรุงความปลอดภัยระดับ Enterprise (P0 & P1 Hardening):
+
+| มาตรการความปลอดภัย | การทำงานในโค้ด | ประโยชน์และการป้องกัน |
+|---|---|---|
+| **Zero-Token in Git** | แยกความลับลง `/opt/agent-bridge/.env` (chmod 600) | ไม่มี API Token ใดๆ หลุดเข้าไปใน Git Repository 100% |
+| **Subprocess Sanitization** | `getSanitizedEnv()` ใน `taskRunner.ts` | ตัด `KMITL_TOKEN`, `BRIDGE_API_KEY`, และ `SSH_AUTH_SOCK` ไม่ให้ Child Process หรือ Test Scripts ขโมยไปได้ |
+| **Path Traversal Guard** | `resolveSafeWorkspace()` ด้วย `path.relative` | ป้องกันการใช้ `../` หรือ Directory Sibling Prefix เพื่อหลุดออกนอกโฟลเดอร์ |
+| **Canonical Symlink Guard** | ตรวจ `fs.realpathSync(target)` ใน `resolveSafeWorkspace` | สกัดกั้นการสร้าง Symbolic Link ภายใน Workspace ที่ชี้ออกไปยัง `/etc` หรือ Host Root |
+| **Direct Stdin Piping** | `spawn` พร้อม `shell: false` และ Stdin Pipe | ขจัดปัญหา Shell Metacharacter Injection (`;`, `&&`, `|`, `` ` ``) สิ้นเชิง และไม่สร้างไฟล์ชั่วคราวใน `/tmp` |
+| **Process Group Kill** | `detached: true` และ `process.kill(-child.pid)` | กวาดล้างทั้งโปรเซสแม่และลูกหลาน (Grandchildren) ทั้งหมดเมื่อเกิด Timeout ป้องกัน Zombie Processes |
+| **Anti-OOM Buffer Cap** | จำกัด Logs ที่ 10MB (`MAX_OUTPUT_BYTES`) พร้อม Drain Stream | ป้องกัน Node.js หน่วยความจำเต็ม (OOM) เมื่อคำสั่งพ่น Output ปริมาณมหาศาล |
+| **OWASP Bearer Auth** | บังคับส่ง Header `Authorization: Bearer <token>` | ตัดการรับ Token ผ่าน URL Query String (`?key=`) ป้องกัน Token รั่วใน Web Logs |
+
+---
+
+## 14. ⚙️ การบริหารจัดการด้วย PM2 (PM2 Operations)
+
+ระบบ Backend และ Worker ควบคุมการทำงานผ่าน **PM2** ภายใต้ชื่อ `proxmox-codex-bridge`:
+
 ```bash
-pm2 restart proxmox-codex-bridge
-```
-ระบบจะโหลดค่าความลับใหม่เข้าใช้งานทันทีโดยไม่ต้องบิลด์หน้าเว็บใหม่ และไม่มีความเสี่ยงที่คีย์จะหลุดเข้า Git
+# ตรวจสอบสถานะการทำงาน หน่วยความจำ และ CPU
+pm2 status
 
-### Q3: จะดู Logs ย้อนหลังของระบบได้อย่างไร?
-**A:** ดูผ่านไฟล์บันทึกที่แยกไว้ใน `/opt/agent-bridge/logs/`:
-* Logs ทั่วไป: `/opt/agent-bridge/logs/pm2-out.log`
-* Logs ข้อผิดพลาด: `/opt/agent-bridge/logs/pm2-error.log`
+# ดู Logs สดแบบ Real-time
+pm2 logs proxmox-codex-bridge
+
+# ดู Logs ย้อนหลัง 100 บรรทัดล่าสุด (ไม่ Stream)
+pm2 logs proxmox-codex-bridge --lines 100 --nostream
+
+# รีสตาร์ท Service พร้อมโหลด Environment (.env) ใหม่
+pm2 restart proxmox-codex-bridge --update-env
+
+# บันทึกสถานะ Service ปัจจุบันสำหรับบูตเครื่อง
+pm2 save
+```
+
+- **Structured Logs:** บันทึกแยกไฟล์ชัดเจนที่ `/opt/agent-bridge/logs/pm2-out.log` และ `/opt/agent-bridge/logs/pm2-error.log`
+- **Memory Threshold:** ตั้งค่า `max_memory_restart: '600M'` ใน `ecosystem.config.cjs` หากโปรเซสใช้แรมเกินจะถูก Restart อัตโนมัติ
 
 ---
 
-## 📝 บันทึกประวัติการพัฒนา (Changelog)
+## 15. ❓ ตารางวิเคราะห์และแก้ปัญหา (Troubleshooting Matrix)
 
-* **v2.3.0 (ล่าสุด):**
-  * ติดตั้ง **PM2 Process Manager (`ecosystem.config.cjs`)** ควบคุม Service, Memory Cap, และ Logging
-  * ยกระดับความปลอดภัย **Zero-Token Git Security** ย้าย Secrets ทั้งหมดไปไว้ใน `.env` (chmod 600)
-  * เพิ่มระบบ **Path Traversal Protection** ป้องกันการเข้าถึงไฟล์นอก Workspace
-  * ติดตั้ง **Redis 7 Job Queue & Worker (`dashboard/src/lib/queue.ts`)** สั่งงาน Asynchronous (HTTP 202)
-  * เพิ่มระบบ **Server-Sent Events (SSE) `/api/task/[id]/events`** สตรีม Logs และสถานะคิวงานสด
-  * เพิ่มระบบ **Automated Evidence Test Gate (`runTestGate`)** ตรวจสอบ Unit Test และ Syntax อัตโนมัติ
-  * เพิ่มระบบ **Safe Workspace Lease Lock** ล็อค Workspace ใน Redis ป้องกันการลบขณะมีงานรันอยู่ (409 Conflict)
-  * เพิ่มปุ่ม **Export Report** ดาวน์โหลดรายงานผลงานเป็น Markdown, Git Patch (.patch) หรือ Audit JSON
-  * ปรับปรุง **Permanent CLI Runner (`scripts/ask_models.py`)** ให้รองรับการสตรีมผ่าน Redis SSE
-* **v2.2.0:**
-  * เพิ่มระบบ **Task Intent Detection** แยกประเภทงาน `💻 Code Task` vs `💡 General / Planning`
-  * ติดตั้ง **Global Anti-Hallucination Rules** บังคับใช้ทุกห้องแชท
-* **v2.1.0:**
-  * แยกโค้ดหน้าเว็บเป็น **11 Modular Components** บน SvelteKit 5 Runes
-  * เพิ่มระบบ **Auto Temp Workspace** พร้อมการตั้งชื่อ Slugify
-* **v2.0.0:**
-  * เปิดตัว **Dual Comparison Engine** รัน OpenAI Codex CLI คู่กับ DeepSeek R1 KMITL GPU
+| ปัญหาที่พบ | สาเหตุที่เป็นไปได้ | วิธีตรวจสอบอย่างปลอดภัย | วิธีแก้ไข |
+|---|---|---|---|
+| **API ตอบ 401 Unauthorized** | ไม่ได้ส่ง Bearer Header หรือ Key ใน `.env` ไม่ตรง | ตรวจสอบตัวแปร `BRIDGE_API_KEY` ใน `.env` | ส่ง Header `Authorization: Bearer <key>` ให้ถูกต้อง |
+| **ส่งงานแล้วได้ 202 แต่งานไม่เริ่ม** | PM2 Worker หยุดทำงาน หรือ Redis ค้าง | ตรวจ `pm2 status` และ `redis-cli ping` | สั่ง `pm2 restart proxmox-codex-bridge` |
+| **ลบ Workspace แล้วตอบ 409 Conflict** | มี Task กำลังประมวลผลและถือ Lease Lock อยู่ | ตรวจสอบหน้า Dashboard แถบ Active Tasks | รองานทำงานเสร็จ หรือรอจนหมดช่วง Lease |
+| **DeepSeek แจ้ง Unauthorized (401)** | `KMITL_TOKEN` ใน `.env` หมดอายุหรือไม่ถูกต้อง | ตรวจสอบ Log ใน `/opt/agent-bridge/logs/pm2-error.log` | นำ Token ใหม่มาใส่ใน `.env` แล้วสั่ง `pm2 restart ... --update-env` |
+| **Codex CLI แจ้ง Not Logged In** | Session ของ ChatGPT Plus หมดอายุ | รัน `codex login status` บน Container | รัน `codex login` เพื่อยืนยันสิทธิ์ OAuth ใหม่ |
+| **SSE สตรีมมิ่งไม่แสดงผลบน Browser** | Reverse Proxy บัฟเฟอร์ข้อความไว้ | ตรวจสอบการตั้งค่า Nginx (ต้องการ `proxy_buffering off;`) | ปิด Buffering บน Reverse Proxy |
+| **Output Log มีข้อความ Truncated** | โปรแกรมพ่นข้อมูลออกมาเกิน 10MB | ตรวจสอบขนาด Log ใน Test Evidence | ปรับคำสั่งใน Test ให้เป็นแบบย่อ (Quiet mode เช่น `pytest -q`) |
+| **Service ไม่เริ่มทำงานหลัง Reboot Proxmox** | ยังไม่ได้ผูกคำสั่ง systemd startup ของ PM2 | รัน `systemctl status pm2-root` | รัน `pm2 startup systemd` และ `pm2 save` |
+
+---
+
+## 16. 📝 บันทึกประวัติการพัฒนา (Changelog)
+
+### v2.2.0 (Security & Architecture Hardening - Post Audit)
+- 🛡️ **P0 Hardening:** เพิ่ม Canonical Realpath Symlink Guard ป้องกัน Symlink Escape
+- 🧹 **P0 Hardening:** ตัด `SSH_AUTH_SOCK` และ `CODEX_CONFIG_DIR` ออกจากการสืบทอดไปยัง Subprocesses
+- 🔒 **P0 Hardening:** ยกเลิกการรับ Key ผ่าน URL (`?key=`) บังคับใช้เฉพาะ Bearer Header ตามมาตรฐาน OWASP
+- 🌲 **P0 Hardening:** ปรับใช้ Process Group (`detached: true` + `kill -pid`) กำจัด Grandchildren / Zombie
+- ⚡ **P1 Hardening:** เปลี่ยนมาใช้คำสั่ง Redis 7 `BLMOVE` แบบ Atomic Queue-to-Processing
+- 🔄 **P1 Hardening:** เพิ่มระบบ `recoverOrphanedTasks` กู้คืนงานที่ค้างตอนบูตระบบอย่างปลอดภัย
+- 🛡️ **P1 Hardening:** จำกัดเพดาน Memory Buffer ที่ 10MB พร้อมระบบ Stream Draining ป้องกัน Node.js OOM
+
+### v2.1.0 (Job Queue & PM2 Process Management)
+- ⚡ ติดตั้งระบบ Redis 7 Job Queue รองรับงานแบบ Asynchronous (HTTP 202 Accepted + taskId)
+- 📡 เพิ่มระบบ Server-Sent Events (SSE) ผ่าน Redis PubSub สตรีมมิ่ง Logs และสถานะแบบสด
+- 🔒 สร้างระบบ Workspace Lease Guard พร้อม Heartbeat Renewal และ Atomic Lua Release
+- ⚙️ ย้ายการจัดการ Service ทั้งหมดขึ้นควบคุมด้วย PM2 (`ecosystem.config.cjs`) พร้อม Memory Cap 600M
+- 🛡️ เพิ่ม Automated Evidence Test Gate แยกประเภท Test Suite และ Syntax Verification
+
+### v2.0.0 (Multi-Agent Consensus Platform)
+- 🤝 เปิดตัวระบบ Multi-Agent Consensus Loop (Bilateral Peer Review ระหว่าง Codex และ DeepSeek)
+- 🌲 เพิ่มระบบ Git Worktree Isolation สำหรับการทดสอบโค้ดแบบขนาน (Dual Model Compare)
+- 🌐 อัปเกรดหน้า Web Dashboard สู่ Svelte 5 Runes พร้อมระบบ Export รายงานแบบ Markdown, Git Patch และ JSON
+
+---
+
+## 📄 ลิขสิทธิ์ (License)
+
+โครงการนี้เผยแพร่ภายใต้ [MIT License](LICENSE) สามารถนำไปใช้งาน ปรับแต่ง และพัฒนาต่อได้อย่างอิสระ
