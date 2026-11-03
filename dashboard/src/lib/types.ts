@@ -45,6 +45,7 @@ export interface TestEvidence {
 	testCmd: string;
 	output: string;
 	error?: string;
+	type?: 'test_suite' | 'syntax_check' | 'none';
 }
 
 export interface TaskResult {

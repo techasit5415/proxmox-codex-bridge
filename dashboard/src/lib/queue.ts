@@ -9,7 +9,11 @@ const REDIS_PORT = Number(process.env.REDIS_PORT) || 6379;
 
 let redisClient: Redis | null = null;
 let redisSub: Redis | null = null;
+let redisWorker: Redis | null = null;
 let isWorkerRunning = false;
+
+// Active lease heartbeats keyed by taskId
+const leaseHeartbeats = new Map<string, NodeJS.Timeout>();
 
 export function getRedisClient(): Redis {
 	if (!redisClient) {
@@ -47,6 +51,28 @@ export function getRedisSubscriber(): Redis {
 	return redisSub;
 }
 
+/**
+ * Dedicated Redis client for the background worker's blocking BRPOP loop.
+ * Prevents blocking connection contention with web API requests and lease checks.
+ */
+export function getRedisWorkerClient(): Redis {
+	if (!redisWorker) {
+		redisWorker = new Redis({
+			host: REDIS_HOST,
+			port: REDIS_PORT,
+			maxRetriesPerRequest: null,
+			lazyConnect: false,
+			retryStrategy(times) {
+				return Math.min(times * 100, 3000);
+			}
+		});
+		redisWorker.on('error', (err) => {
+			console.warn('[Redis Worker Client Warning]:', err.message);
+		});
+	}
+	return redisWorker;
+}
+
 export async function isRedisConnected(): Promise<boolean> {
 	try {
 		const redis = getRedisClient();
@@ -68,6 +94,42 @@ export async function acquireWorkspaceLease(workspace: string, taskId: string, t
 	} catch (e) {
 		console.warn('[Workspace Lease Warning]:', e);
 		return true;
+	}
+}
+
+/**
+ * Periodically renews the lease TTL in Redis while a task is actively running.
+ * Prevents lease expiration during long-running consensus or complex workflows.
+ */
+export function startLeaseHeartbeat(workspace: string, taskId: string, ttlSec = 900) {
+	if (!workspace || workspace === 'all' || workspace === 'auto-temp' || workspace === 'temp') return;
+	stopLeaseHeartbeat(taskId);
+
+	const interval = setInterval(async () => {
+		try {
+			const redis = getRedisClient();
+			const key = `workspace:lease:${workspace}`;
+			const lua = `
+				if redis.call("get", KEYS[1]) == ARGV[1] then
+					return redis.call("expire", KEYS[1], ARGV[2])
+				else
+					return 0
+				end
+			`;
+			await redis.eval(lua, 1, key, taskId, ttlSec);
+		} catch (e) {
+			console.warn(`[Lease Heartbeat Warning] Failed to renew lease for ${workspace}:`, e);
+		}
+	}, 30000); // Heartbeat every 30s
+
+	leaseHeartbeats.set(taskId, interval);
+}
+
+export function stopLeaseHeartbeat(taskId: string) {
+	const timer = leaseHeartbeats.get(taskId);
+	if (timer) {
+		clearInterval(timer);
+		leaseHeartbeats.delete(taskId);
 	}
 }
 
@@ -201,14 +263,16 @@ export async function getTask(taskId: string): Promise<TaskJobData | null> {
 export function startTaskWorker() {
 	if (isWorkerRunning) return;
 	isWorkerRunning = true;
-	console.log('[Redis Job Queue] Worker started. Monitoring tasks:queue...');
+	console.log('[Redis Job Queue] Dedicated Worker started. Monitoring tasks:queue...');
 
 	(async () => {
+		const workerClient = getRedisWorkerClient();
+		const redis = getRedisClient();
+
 		while (isWorkerRunning) {
 			try {
-				const redis = getRedisClient();
-				// Block and wait for next task with 3-second timeout
-				const res = await redis.brpop('tasks:queue', 3);
+				// Block and wait on dedicated worker client with 3-second timeout
+				const res = await workerClient.brpop('tasks:queue', 3);
 				if (!res || !res[1]) continue;
 
 				const taskId = res[1];
@@ -224,10 +288,12 @@ export function startTaskWorker() {
 					status: 'running',
 					data: JSON.stringify(job)
 				});
+				await redis.sadd('tasks:processing', taskId);
 				await publishTaskEvent(taskId, { type: 'status', status: 'running', message: 'Worker started processing' });
 
-				// Acquire Workspace Lease
+				// Acquire Workspace Lease and start Heartbeat renewal
 				await acquireWorkspaceLease(job.workspace, taskId, 900);
+				startLeaseHeartbeat(job.workspace, taskId, 900);
 
 				try {
 					// Run Pipeline with Event Streaming
@@ -270,8 +336,10 @@ export function startTaskWorker() {
 						error: taskErr.message
 					});
 				} finally {
-					// Release Workspace Lease
+					// Stop Heartbeat renewal and release Workspace Lease
+					stopLeaseHeartbeat(taskId);
 					await releaseWorkspaceLease(job.workspace, taskId);
+					await redis.srem('tasks:processing', taskId);
 				}
 			} catch (err: any) {
 				// Prevent tight error loop if Redis disconnects

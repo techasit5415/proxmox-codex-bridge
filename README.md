@@ -109,53 +109,62 @@ flowchart TD
 
 ---
 
-## 🛡️ สถาปัตยกรรมความปลอดภัย (Security Architecture & Best Practices)
+## 🛡️ สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)
 
-เนื่องจากระบบเชื่อมต่อกับโมเดลภายนอกและสั่งรันคำสั่ง Shell อัตโนมัติ ความปลอดภัยจึงเป็นเรื่องสำคัญที่สุด ระบบจึงได้วางมาตรฐานความปลอดภัย 5 ชั้น ดังนี้:
+ระบบได้รับการ Audit เชิงลึกโดย **ChatGPT (OpenAI Codex: `gpt-6.1-sol`)** และได้รับการปรับปรุงมาตรการความปลอดภัยระดับ Production 6 ชั้น ดังนี้:
 
-### 1. การจัดการ Secrets & API Tokens (Zero-Token in Git)
-* **ปัญหาเดิม:** การ Hardcode API Key หรือ Token ไว้ในซอร์สโค้ด เสี่ยงต่อการรั่วไหลเมื่อ Push ขึ้น Public GitHub Repository
+### 1. การจัดการ Secrets & API Tokens (Zero-Token in Git & Subprocess Isolation)
+* **ปัญหาเดิม:** การ Hardcode API Key หรือ Token ไว้ในซอร์สโค้ด เสี่ยงต่อการรั่วไหลเมื่อ Push ขึ้น Public GitHub Repository และคำสั่ง `spawn`/`exec` มักสืบทอด `process.env` ไปยังสคริปต์ภายนอก
 * **แนวทางแก้ไข:**
-  1. ไฟล์โค้ดทั้งหมดจะอ่านผ่าน `process.env.KMITL_TOKEN` หรือ `process.env.OPENAI_API_KEY`
-  2. ไฟล์ `.gitignore` บังคับห้ามติดตาม `.env` และ `.env.*` ทุกชนิด (ยกเว้น `.env.example`)
-  3. บนเซิร์ฟเวอร์ Proxmox จะสร้างไฟล์ `/opt/agent-bridge/.env` เก็บข้อมูลลับเฉพาะ โดยกำหนดสิทธิ์ไฟล์เข้มงวด:
-     ```bash
-     chmod 600 /opt/agent-bridge/.env
-     ```
-  4. ไฟล์ `ecosystem.config.cjs` ของ PM2 จะอ่าน `.env` เข้าหน่วยความจำตอนเริ่มต้น Service โดยตรง
+  1. ไฟล์โค้ดทั้งหมดอ่านค่าผ่าน `process.env` โดยไม่มีการ Hardcode Key ใดๆ
+  2. ไฟล์ `.gitignore` บังคับห้ามติดตาม `.env` และ `.env.*` ทุกชนิด
+  3. บนเซิร์ฟเวอร์ Proxmox จะสร้างไฟล์ `/opt/agent-bridge/.env` กำหนดสิทธิ์เข้มงวด `chmod 600 /opt/agent-bridge/.env`
+  4. **Subprocess Environment Sanitization (`getSanitizedEnv`):** ระบบจะกรองและส่งเฉพาะตัวแปรระบบที่จำเป็น (`PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TERM`, `SHELL`, `TMPDIR`, `SSH_AUTH_SOCK`) ให้กับ Child Process (Codex CLI, `npm test`, `pytest`, `git`) โดย **ตัด `BRIDGE_API_KEY`, `KMITL_TOKEN` และ Secret อื่นๆ ออกทั้งหมด** เพื่อป้องกันไม่ให้โค้ดที่ไม่น่าไว้วางใจใน Workspace สามารถ dump หรือขโมย Token ออกไปได้
 
-### 2. การป้องกัน Path Traversal (`../../`)
-* **ปัญหาเดิม:** หากผู้ใช้หรือโมเดลระบุชื่อ Workspace เป็น `../../etc/` คำสั่งอาจหลุดออกไปอ่านหรือลบไฟล์ของระบบปฏิบัติการ
+### 2. การป้องกัน Path Traversal & Directory Sibling Escapes (`resolveSafeWorkspace`)
+* **ปัญหาเดิม:** การตรวจสอบด้วย `target.startsWith(WORKSPACES_DIR)` แบบ String Prefix ธรรมดา มีช่องโหว่ **Directory Sibling** (เช่น `/opt/agent-bridge/workspaces-backup` ยังคงขึ้นต้นด้วย `/opt/agent-bridge/workspaces`) และอาจยอมรับ `.` (root directory)
 * **แนวทางแก้ไข:**
-  ใน `taskRunner.ts` และ API Routes ทุกตัว จะมีการตรวจสอบอย่างเข้มงวดด้วย `path.resolve`:
+  ใน `taskRunner.ts` และ API Routes ทุกตัว ใช้ฟังก์ชัน `resolveSafeWorkspace`:
   ```typescript
-  const target = path.resolve(WORKSPACES_DIR, activeWorkspace);
-  if (!target.startsWith(path.resolve(WORKSPACES_DIR))) {
-      throw new Error('Security Error: Path traversal attempt detected');
+  export function resolveSafeWorkspace(workspaceName: string): string {
+    const cleanName = workspaceName.trim();
+    if (!cleanName || cleanName === '.' || cleanName === '..') {
+      throw new Error('Invalid workspace name: cannot be root or dot directory');
+    }
+    if (cleanName.includes('/') || cleanName.includes('\\')) {
+      throw new Error('Invalid workspace name: directory separators are forbidden');
+    }
+    const root = path.resolve(WORKSPACES_DIR);
+    const target = path.resolve(root, cleanName);
+    const rel = path.relative(root, target);
+
+    if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || rel.startsWith('../') || path.isAbsolute(rel)) {
+      throw new Error('Forbidden workspace path: directory traversal detected');
+    }
+    return target;
   }
   ```
-  หากพบการพยายามเข้าถึงนอกโฟลเดอร์ `/opt/agent-bridge/workspaces/` ระบบจะตัดการทำงานและส่งรหัส **HTTP 403 Forbidden** ทันที
+  ตัดสิทธิ์และส่งกลับ **HTTP 400/403** ทันทีหากตรวจพบความพยายามหลบหนีออกจากไดเรกทอรี
 
-### 3. การป้องกัน API ด้วย Bearer Token (`BRIDGE_API_KEY`)
-* ใน `hooks.server.ts` ระบบรองรับตัวเลือกเสริมในการล็อค API:
-  * หากกำหนด `BRIDGE_API_KEY=your_secret_token` ในไฟล์ `.env`
-  * ทุกคำขอที่เรียกเข้ามายัง `/api/task` หรือ `/api/workspaces` จะต้องส่ง Header:
-    ```http
-    Authorization: Bearer your_secret_token
-    ```
-  * หากไม่ส่งหรือส่งผิด จะถูกปฏิเสธด้วยรหัส **HTTP 401 Unauthorized**
+### 3. การรันคำสั่ง Codex แบบ Direct Stdin Pipe โดยไม่ผ่าน Shell (`execCodexWithStdin`)
+* ไม่มีการเขียน Prompt ลงในไฟล์ชั่วคราวบน `/tmp` ที่อาจถูกกระบวนการอื่นแอบอ่าน
+* ไม่มีการเรียกผ่าน Shell (`shell: false`) และใช้ `spawn('codex', ['exec', '--dangerously-bypass-approvals-and-sandbox', '-C', runDir, '-'])`
+* ส่งเนื้อหา Prompt เข้าสู่ `child.stdin.write(prompt)` โดยตรง 100% จึงตัดปัญหา Shell Metacharacter Injection (เช่น `;`, `&&`, `|`, `` ` ``) สิ้นเชิง
 
-### 4. การรันคำสั่งแบบ Stdin Pipe ป้องกัน Command Injection
-* คำสั่งของ Codex จะไม่นำ Prompt มาต่อ String ใน Shell ตรงๆ (เช่น `codex exec "$prompt"`) ซึ่งอาจเปิดช่องให้เกิด Shell Injection
-* ระบบใช้วิธี **เขียน Prompt ลงไฟล์ชั่วคราวแล้ว Pipe ผ่าน Stdin**:
-  ```bash
-  cat /tmp/codex_prompt.txt | codex exec --dangerously-bypass-approvals-and-sandbox -C "$target" -
-  ```
-  ทำให้ตัวอักษรพิเศษ เช่น `;`, `&&`, `|`, `` ` `` ไม่ถูก Shell ตีความเป็นคำสั่งระบบ
+### 4. การจัดการคิวและต่ออายุ Lease Lock อัตโนมัติ (Heartbeat Lease Renewal)
+* เมื่อ Worker รับงาน จะสร้าง Lease Lock ใน Redis และเริ่มระบบ **Heartbeat Renewal** ทุก 30 วินาที เพื่อขยาย TTL ไปเรื่อยๆ ตราบใดที่โปรเซสยังทำงานอยู่ ป้องกันปัญหา Task ทำงานนานจน Lease หมดอายุ
+* เมื่อทำงานเสร็จหรือเกิด Error จะปลด Lock ด้วย **Atomic Lua Script** (เปรียบเทียบ Token ป้องกันการลบ Lease ของผู้อื่น)
+* แยกการเชื่อมต่อ Redis ของ Worker (`getRedisWorkerClient`) ออกจาก Web API Client เพื่อป้องกันไม่ให้คำสั่งบล็อค `BRPOP` กีดกันคำสั่งอื่น
 
-### 5. คำแนะนำด้าน Sandbox & Proxmox VE
-* **Unprivileged Container:** แนะนำให้สร้าง Proxmox LXC Container ในโหมด **Unprivileged Container (`unprivileged: 1`)** เสมอ เพื่อให้สิทธิ์ `root` ใน Container เทียบเท่ากับ Non-root user บน Proxmox Host ขจัดความเสี่ยงต่อการหลุดออกจาก Container (Container Breakout)
-* **Resource Caps:** PM2 ตั้งค่า `max_memory_restart: '600M'` หาก Node.js ใช้หน่วยความจำเกินจะถูกรีสตาร์ทอัตโนมัติ ไม่ทำให้ Container ค้าง
+### 5. การป้องกัน API ด้วย Bearer Token (`BRIDGE_API_KEY`)
+* ใน `hooks.server.ts` หากกำหนด `BRIDGE_API_KEY` ในไฟล์ `.env`:
+  * ทุก Request ที่เรียกมายัง `/api/*` จะต้องส่ง Header `Authorization: Bearer <token>` หรือ Query Parameter `?key=<token>`
+  * หากไม่ส่งหรือส่งไม่ถูกต้อง จะถูกปฏิเสธด้วยรหัส **HTTP 401 Unauthorized**
+  * หากยังไม่ได้กำหนด Key ระบบจะแสดงข้อความเตือนด้านความปลอดภัยบน Console ชัดเจน
+
+### 6. คำแนะนำด้าน Sandbox & Proxmox VE
+* **Unprivileged Container:** สร้าง LXC Container ในโหมด **Unprivileged Container (`unprivileged: 1`)** เสมอ เพื่อให้สิทธิ์ `root` ใน Container เทียบเท่ากับ Non-root user บน Proxmox Host ขจัดความเสี่ยงต่อการเกิด Container Breakout
+* **Resource Monitoring:** PM2 มี `max_memory_restart: '600M'` ป้องกัน Memory Leak ค้างในระบบ
 
 ---
 

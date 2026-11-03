@@ -170,10 +170,10 @@
 				>
 					{#if getTestEvidence()?.passed}
 						<ShieldCheck class="w-3.5 h-3.5 text-emerald-400" />
-						<span>Test Gate (Passed)</span>
+						<span>{getTestEvidence()?.type === 'syntax_check' ? 'Syntax Verified' : 'Test Gate (Passed)'}</span>
 					{:else}
 						<ShieldAlert class="w-3.5 h-3.5 text-rose-400" />
-						<span>Test Gate (Failed)</span>
+						<span>{getTestEvidence()?.type === 'syntax_check' ? 'Syntax Error' : 'Test Gate (Failed)'}</span>
 					{/if}
 				</button>
 			{/if}
@@ -341,14 +341,22 @@
 						{#if evidence?.passed}
 							<ShieldCheck class="w-5 h-5 text-emerald-400 shrink-0" />
 							<div>
-								<div class="font-bold text-sm">Automated Evidence Test Gate: PASSED</div>
-								<div class="text-xs text-zinc-400">All tests and syntax checks completed successfully without errors.</div>
+								<div class="font-bold text-sm">
+									{evidence?.type === 'syntax_check' ? 'Automated Syntax Verification: PASSED' : 'Automated Test Suite: PASSED'}
+								</div>
+								<div class="text-xs text-zinc-400">
+									{evidence?.type === 'syntax_check' ? 'All modified code files passed syntax/compilation validation.' : 'All tests completed successfully without errors.'}
+								</div>
 							</div>
 						{:else}
 							<ShieldAlert class="w-5 h-5 text-rose-400 shrink-0" />
 							<div>
-								<div class="font-bold text-sm">Automated Evidence Test Gate: FAILED</div>
-								<div class="text-xs text-zinc-400">Errors detected during test execution or syntax check.</div>
+								<div class="font-bold text-sm">
+									{evidence?.type === 'syntax_check' ? 'Automated Syntax Verification: FAILED' : 'Automated Test Suite: FAILED'}
+								</div>
+								<div class="text-xs text-zinc-400">
+									{evidence?.type === 'syntax_check' ? 'Syntax errors detected in modified code files.' : 'Errors detected during test suite execution.'}
+								</div>
 							</div>
 						{/if}
 					</div>

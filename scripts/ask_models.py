@@ -16,11 +16,20 @@ import urllib.error
 sys.stdout.reconfigure(encoding='utf-8')
 
 PROXMOX_BRIDGE_URL = "http://192.168.5.159:3000/api/task"
+API_KEY = os.environ.get("BRIDGE_API_KEY", "")
+
+def get_headers(extra=None):
+    h = {"Accept": "application/json"}
+    if API_KEY:
+        h["Authorization"] = f"Bearer {API_KEY}"
+    if extra:
+        h.update(extra)
+    return h
 
 def stream_or_poll_task(task_id: str):
     events_url = f"http://192.168.5.159:3000/api/task/{task_id}/events"
     try:
-        req = urllib.request.Request(events_url, headers={"Accept": "text/event-stream"})
+        req = urllib.request.Request(events_url, headers=get_headers({"Accept": "text/event-stream"}))
         with urllib.request.urlopen(req, timeout=900) as resp:
             for line in resp:
                 line_str = line.decode('utf-8', errors='ignore').strip()
@@ -49,7 +58,7 @@ def stream_or_poll_task(task_id: str):
     last_stage = None
     for _ in range(300):
         try:
-            req = urllib.request.Request(status_url)
+            req = urllib.request.Request(status_url, headers=get_headers())
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 task = data.get('task', {})
@@ -80,7 +89,7 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode:
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
+        headers=get_headers({"Content-Type": "application/json"})
     )
     
     try:
@@ -100,6 +109,9 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode:
         elif e.code == 409:
             err_data = e.read().decode('utf-8', errors='ignore')
             print(f"[ERROR 409] Workspace Conflict: {err_data}", file=sys.stderr)
+            sys.exit(1)
+        elif e.code == 401:
+            print("[ERROR 401] Unauthorized: Invalid or missing BRIDGE_API_KEY", file=sys.stderr)
             sys.exit(1)
         else:
             print(f"[ERROR] HTTP Error {e.code}: {e.read().decode('utf-8', errors='ignore')}", file=sys.stderr)
@@ -212,8 +224,10 @@ def main():
     test_evidence = res.get("testEvidence") or (res.get("consensus") or {}).get("testEvidence")
     if test_evidence and test_evidence.get("ran"):
         status_label = "PASSED (✔)" if test_evidence.get("passed") else "FAILED (✖)"
+        gate_type = test_evidence.get("type", "test_suite")
+        gate_label = "Automated Syntax Verification" if gate_type == "syntax_check" else "Automated Test Suite"
         print("\n" + "=" * 60)
-        print(f"🛡️ [Automated Evidence Test Gate: {status_label}]")
+        print(f"🛡️ [{gate_label}: {status_label}]")
         print("=" * 60)
         print(f"Command: {test_evidence.get('testCmd')}")
         print(test_evidence.get("output", "(No output)"))

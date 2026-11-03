@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import util from 'util';
 import path from 'path';
 import fs from 'fs';
@@ -8,10 +8,117 @@ import type { AIModelConfig, TaskResult, TestEvidence, TaskJobData } from './typ
 import { getModels } from './models';
 
 const execAsync = util.promisify(exec);
-const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
+export const WORKSPACES_DIR = '/opt/agent-bridge/workspaces';
 const KMITL_API_URL = 'https://aipass.cskmitl.com/api/chat';
 const KMITL_TOKEN = process.env.KMITL_TOKEN || '';
 const DEEPSEEK_MODEL = 'deepseek-r1:14b';
+
+/**
+ * Validates and resolves a workspace name within WORKSPACES_DIR.
+ * Prevents Directory Traversal, root access, and sibling prefix attacks.
+ */
+export function resolveSafeWorkspace(workspaceName: string): string {
+	if (!workspaceName || typeof workspaceName !== 'string') {
+		throw new Error('Workspace name is required');
+	}
+	const cleanName = workspaceName.trim();
+	if (cleanName === '' || cleanName === '.' || cleanName === '..') {
+		throw new Error('Invalid workspace name: cannot be root or dot directory');
+	}
+	if (cleanName.includes('/') || cleanName.includes('\\')) {
+		throw new Error('Invalid workspace name: directory separators are forbidden');
+	}
+
+	const root = path.resolve(WORKSPACES_DIR);
+	const target = path.resolve(root, cleanName);
+	const rel = path.relative(root, target);
+
+	if (
+		rel === '' ||
+		rel === '..' ||
+		rel.startsWith(`..${path.sep}`) ||
+		rel.startsWith('../') ||
+		path.isAbsolute(rel)
+	) {
+		throw new Error('Forbidden workspace path: directory traversal detected');
+	}
+	return target;
+}
+
+/**
+ * Generates a sanitized environment object for child processes (Codex CLI, tests, git).
+ * Prevents leaking host secrets, BRIDGE_API_KEY, and API tokens to untrusted code.
+ */
+export function getSanitizedEnv(): NodeJS.ProcessEnv {
+	const allowedKeys = [
+		'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'SHELL', 'TMPDIR',
+		'NODE_PATH', 'PYTHONPATH', 'SSH_AUTH_SOCK', 'CODEX_CONFIG_DIR'
+	];
+	const safeEnv: NodeJS.ProcessEnv = {
+		LANG: 'C.UTF-8',
+		LC_ALL: 'C.UTF-8'
+	};
+	for (const key of allowedKeys) {
+		if (process.env[key] !== undefined) {
+			safeEnv[key] = process.env[key];
+		}
+	}
+	return safeEnv;
+}
+
+/**
+ * Safely executes Codex CLI via direct stdin pipe without writing prompt files to /tmp
+ * and without invoking a shell (shell: false).
+ */
+export function execCodexWithStdin(
+	runDir: string,
+	prompt: string,
+	timeoutMs = 15 * 60 * 1000
+): Promise<{ stdout: string; stderr: string }> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(
+			'codex',
+			['exec', '--dangerously-bypass-approvals-and-sandbox', '-C', runDir, '-'],
+			{
+				cwd: runDir,
+				env: getSanitizedEnv(),
+				shell: false
+			}
+		);
+
+		let stdout = '';
+		let stderr = '';
+		let killed = false;
+
+		const timer = setTimeout(() => {
+			killed = true;
+			child.kill('SIGTERM');
+			setTimeout(() => {
+				if (!child.killed) child.kill('SIGKILL');
+			}, 3000);
+			reject(new Error(`Codex process timed out after ${Math.round(timeoutMs / 1000)}s`));
+		}, timeoutMs);
+
+		child.stdout?.on('data', (d) => { stdout += d.toString(); });
+		child.stderr?.on('data', (d) => { stderr += d.toString(); });
+
+		child.on('error', (err) => {
+			clearTimeout(timer);
+			reject(err);
+		});
+
+		child.on('close', () => {
+			clearTimeout(timer);
+			if (killed) return;
+			resolve({ stdout, stderr });
+		});
+
+		if (child.stdin) {
+			child.stdin.write(prompt);
+			child.stdin.end();
+		}
+	});
+}
 
 export function getLatestTokenUsage() {
 	const baseDir = '/root/.codex/sessions';
@@ -132,8 +239,10 @@ export async function cleanupWorktree(repoDir: string, ctx: WorktreeContext, com
 
 export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 	if (!fs.existsSync(targetDir)) {
-		return { ran: false, passed: false, testCmd: 'none', output: 'Workspace does not exist' };
+		return { ran: false, passed: false, testCmd: 'none', output: 'Workspace does not exist', type: 'none' };
 	}
+
+	const safeEnv = getSanitizedEnv();
 
 	try {
 		// 1. package.json with test script
@@ -142,11 +251,12 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			try {
 				const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 				if (pkg.scripts?.test && !pkg.scripts.test.includes('no test specified')) {
-					const { stdout, stderr } = await execAsync('npm test', { cwd: targetDir, timeout: 45000 });
+					const { stdout, stderr } = await execAsync('npm test', { cwd: targetDir, timeout: 45000, env: safeEnv });
 					return {
 						ran: true,
 						passed: true,
 						testCmd: 'npm test',
+						type: 'test_suite',
 						output: (stdout + '\n' + stderr).trim()
 					};
 				}
@@ -155,6 +265,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 					ran: true,
 					passed: false,
 					testCmd: 'npm test',
+					type: 'test_suite',
 					output: (err.stdout || '') + '\n' + (err.stderr || err.message),
 					error: err.message
 				};
@@ -167,11 +278,12 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			fs.existsSync(path.join(targetDir, 'test.py'));
 		if (hasPytest) {
 			try {
-				const { stdout, stderr } = await execAsync('pytest -q || python3 -m unittest discover', { cwd: targetDir, timeout: 45000 });
+				const { stdout, stderr } = await execAsync('pytest -q || python3 -m unittest discover', { cwd: targetDir, timeout: 45000, env: safeEnv });
 				return {
 					ran: true,
 					passed: true,
 					testCmd: 'pytest / python3 -m unittest',
+					type: 'test_suite',
 					output: (stdout + '\n' + stderr).trim()
 				};
 			} catch (err: any) {
@@ -179,6 +291,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 					ran: true,
 					passed: false,
 					testCmd: 'pytest / python3 -m unittest',
+					type: 'test_suite',
 					output: (err.stdout || '') + '\n' + (err.stderr || err.message),
 					error: err.message
 				};
@@ -188,7 +301,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 		// 3. Fallback: Syntax / Lint verification on modified files
 		let diffFiles = '';
 		try {
-			const res = await execAsync('git diff --name-only HEAD~1 2>/dev/null || git status -s', { cwd: targetDir });
+			const res = await execAsync('git diff --name-only HEAD~1 2>/dev/null || git status -s', { cwd: targetDir, env: safeEnv });
 			diffFiles = res.stdout;
 		} catch (e) {}
 
@@ -203,7 +316,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			const absF = path.join(targetDir, f);
 			if (fs.existsSync(absF)) {
 				try {
-					await execAsync(`node --check "${absF}"`, { timeout: 10000 });
+					await execAsync(`node --check "${absF}"`, { timeout: 10000, env: safeEnv });
 					checkOutputs.push(`✔ Syntax OK: ${f}`);
 				} catch (e: any) {
 					checkPassed = false;
@@ -216,7 +329,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			const absF = path.join(targetDir, f);
 			if (fs.existsSync(absF)) {
 				try {
-					await execAsync(`python3 -m py_compile "${absF}"`, { timeout: 10000 });
+					await execAsync(`python3 -m py_compile "${absF}"`, { timeout: 10000, env: safeEnv });
 					checkOutputs.push(`✔ Syntax OK: ${f}`);
 				} catch (e: any) {
 					checkPassed = false;
@@ -230,6 +343,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 				ran: true,
 				passed: checkPassed,
 				testCmd: 'Automated Syntax Verification',
+				type: 'syntax_check',
 				output: checkOutputs.join('\n')
 			};
 		}
@@ -238,6 +352,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			ran: false,
 			passed: true,
 			testCmd: 'none',
+			type: 'none',
 			output: 'No test suite or script detected; workspace clean.'
 		};
 	} catch (e: any) {
@@ -245,6 +360,7 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			ran: false,
 			passed: false,
 			testCmd: 'error',
+			type: 'none',
 			output: e.message,
 			error: e.message
 		};
@@ -270,24 +386,11 @@ User Question:
 ${prompt}`
 		: prompt;
 
-	const promptFile = `/tmp/codex_prompt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.txt`;
-	fs.writeFileSync(promptFile, effectivePrompt, 'utf8');
-
-	const codexCmd = `cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${runDir}" -`;
-
 	let stdout = '';
 	let stderr = '';
-	try {
-		const res = await execAsync(codexCmd, {
-			timeout: 15 * 60 * 1000,
-			maxBuffer: 20 * 1024 * 1024,
-			env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' }
-		});
-		stdout = res.stdout;
-		stderr = res.stderr;
-	} finally {
-		try { fs.unlinkSync(promptFile); } catch (e) {}
-	}
+	const res = await execCodexWithStdin(runDir, effectivePrompt, 15 * 60 * 1000);
+	stdout = res.stdout;
+	stderr = res.stderr;
 	const { stdout: diff } = await execAsync('git diff', { cwd: runDir });
 	const { stdout: status } = await execAsync('git status -s', { cwd: runDir });
 	const tokens = getLatestTokenUsage();
@@ -595,23 +698,25 @@ export async function executeTaskPipeline(
 ): Promise<any> {
 	const { prompt, branch, provider = 'codex' } = job;
 	let activeWorkspace = job.workspace?.trim();
+	let target: string;
 
 	if (!activeWorkspace || activeWorkspace === 'auto-temp' || activeWorkspace === 'temp') {
 		activeWorkspace = slugifyPrompt(prompt);
 		job.workspace = activeWorkspace;
-		const tempTarget = path.join(WORKSPACES_DIR, activeWorkspace);
-		if (!fs.existsSync(tempTarget)) {
-			fs.mkdirSync(tempTarget, { recursive: true });
+		target = resolveSafeWorkspace(activeWorkspace);
+		if (!fs.existsSync(target)) {
+			fs.mkdirSync(target, { recursive: true });
 			const cleanTitle = prompt.replace(/[\r\n]+/g, ' ').slice(0, 100);
 			const readme = `# ${cleanTitle}\n\nAutomated scratch workspace created for prompt:\n> ${prompt}\n`;
-			fs.writeFileSync(path.join(tempTarget, 'README.md'), readme, 'utf8');
+			fs.writeFileSync(path.join(target, 'README.md'), readme, 'utf8');
 			try {
-				await execAsync('git init && git add README.md && git commit -m "init: automated scratch workspace"', { cwd: tempTarget });
+				await execAsync('git init && git add README.md && git commit -m "init: automated scratch workspace"', { cwd: target, env: getSanitizedEnv() });
 			} catch (e) {}
 		}
+	} else {
+		target = resolveSafeWorkspace(activeWorkspace);
 	}
 
-	const target = path.join(WORKSPACES_DIR, activeWorkspace);
 	if (!fs.existsSync(target)) {
 		throw new Error(`Workspace '${activeWorkspace}' not found`);
 	}
@@ -804,18 +909,8 @@ Please provide your rigorous peer review in Thai (and English for technical term
 		})().catch(err => `DeepSeek Review Error: ${err.message}`);
 
 		const codexReviewPromise = (async () => {
-			const promptFile = `/tmp/codex_rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.txt`;
-			fs.writeFileSync(promptFile, codexReviewPrompt, 'utf8');
-			try {
-				const res = await execAsync(`cat "${promptFile}" | codex exec --dangerously-bypass-approvals-and-sandbox -C "${target}" -`, {
-					timeout: 5 * 60 * 1000,
-					maxBuffer: 10 * 1024 * 1024,
-					env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' }
-				});
-				return (res.stdout + '\n' + res.stderr).trim();
-			} finally {
-				try { fs.unlinkSync(promptFile); } catch (e) {}
-			}
+			const res = await execCodexWithStdin(target, codexReviewPrompt, 5 * 60 * 1000);
+			return (res.stdout + '\n' + res.stderr).trim();
 		})().catch(err => `Codex Review Error: ${err.message}`);
 
 		const [deepseekReviewOfCodex, codexReviewOfDeepSeek] = await Promise.all([
