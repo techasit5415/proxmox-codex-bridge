@@ -14,6 +14,7 @@ function getSessionTokens() {
 	if (!fs.existsSync(baseDir)) {
 		return {
 			totalTokens: 0,
+			netTokens: 0,
 			inputTokens: 0,
 			cachedTokens: 0,
 			outputTokens: 0,
@@ -90,7 +91,10 @@ function getSessionTokens() {
 export const GET: RequestHandler = async () => {
 	try {
 		const isAuthed = fs.existsSync('/root/.codex/auth.json');
-		const { stdout: df } = await execAsync("df -h / | awk 'NR==2 {print $3 \" / \" $2 \" (\" $5 \")\"}'");
+		const { stdout: dfRaw } = await execAsync("df -h / | awk 'NR==2 {print $3 \"|\" $2 \"|\" $4 \"|\" $5}'");
+		const [diskUsed = '0G', diskTotal = '0G', diskFree = '0G', diskPercent = '0%'] = dfRaw.trim().split('|');
+		const diskUsage = `${diskUsed} / ${diskTotal} (${diskPercent})`;
+
 		const { stdout: mem } = await execAsync("free -h | awk 'NR==2 {print $3 \" / \" $2}'");
 		const { stdout: nodeVer } = await execAsync('node -v');
 		const { stdout: codexVer } = await execAsync('codex --version 2>/dev/null || echo "codex-cli"');
@@ -98,12 +102,14 @@ export const GET: RequestHandler = async () => {
 
 		let redisStatus = 'offline';
 		let queueLength = 0;
+		let processingCount = 0;
 		try {
 			const connected = await isRedisConnected();
 			if (connected) {
 				redisStatus = 'online';
 				const redis = getRedisClient();
 				queueLength = await redis.llen('tasks:queue');
+				processingCount = await redis.llen('tasks:processing');
 			}
 		} catch (e) {}
 
@@ -112,11 +118,14 @@ export const GET: RequestHandler = async () => {
 			codexAuth: isAuthed ? 'ChatGPT Plus' : 'Not Connected',
 			codexVersion: codexVer.trim(),
 			nodeVersion: nodeVer.trim(),
-			diskUsage: df.trim(),
+			diskUsage,
+			diskFree,
+			diskPercent,
 			memoryUsage: mem.trim(),
 			workspacesDir: WORKSPACES_DIR,
 			redisStatus,
 			queueLength,
+			processingCount,
 			tokens
 		});
 	} catch (err: any) {

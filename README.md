@@ -487,9 +487,28 @@ flowchart LR
 ```
 
 1. **Phase 1: Dual Proposal Generation** — ทั้งสองโมเดลได้รับโจทย์เดียวกัน และคิดค้นวิธีการแก้ปัญหาอย่างอิสระบน Git Worktree ของตนเอง
-2. **Phase 2: Bilateral Cross Peer Review** — DeepSeek R1 ทำหน้าที่ Audit โค้ดของ Codex พร้อมชี้จุดบกพร่อง ในขณะที่ Codex ตรวจสอบโค้ดของ DeepSeek เพื่อหาช่องโหว่
+2. **Phase 2: Bilateral Cross Peer Review** — DeepSeek R1 ทำหน้าที่ Audit โค้ดของ Codex พร้อมชี้จุดบกพร่อง (ผ่าน NDJSON Streaming `stream: true` ป้องกัน Nginx 504 Timeout) ในขณะที่ Codex ตรวจสอบโค้ดของ DeepSeek เพื่อหาช่องโหว่
 3. **Phase 3: Final Harmonization** — นำข้อเสนอแนะและจุดแข็งของทั้งสองฝั่งมาสังเคราะห์เป็นโค้ดสุดท้ายที่สมบูรณ์ที่สุด
 4. **Phase 4: Automated Test Gate** — ตรวจสอบความถูกต้องของโค้ดด้วย Test Suite หรือ Syntax Verification อัตโนมัติ
+
+### 11.1 🌐 ระบบ DeepSeek R1 ReAct Web Agent & GitHub Auto Pre-Fetcher (`taskRunner.ts`)
+เพื่อให้ **DeepSeek R1 (`14b` บน KMITL GPU)** สามารถเข้าถึงข้อมูลจากอินเทอร์เน็ตและอ่านไฟล์ใน Repository ได้ทัดเทียมกับ OpenAI Codex ระบบจึงมี 2 กลไกอัตโนมัติ:
+
+1. **Auto Pre-Fetcher (ดึงลิงก์ GitHub & เว็บไซต์ก่อนเริ่มงานอัตโนมัติ):**
+   - **ตรวจพบลิงก์ GitHub (`https://github.com/<owner>/<repo>`):** หากอยู่ในโหมด `auto-temp` ระบบจะสั่ง `git clone --depth 1` ลงใน Workspace ให้ก่อนเริ่มงานอัตโนมัติ และสร้าง **Workspace Context Snapshot** (`buildWorkspaceSnapshot`) ดึงโครงสร้างไฟล์ (`git ls-files`), `README.md` และไฟล์โค้ดหลักแนบเข้า Prompt ให้ DeepSeek เห็นทันที (และช่วยให้ Codex เห็นไฟล์ใน Workspace เดียวกันโดยไม่ต้องสั่ง `git clone` ซ้ำใน `/tmp`)
+   - **ตรวจพบลิงก์เว็บไซต์ทั่วไป (`https://...`):** ระบบจะดึงเนื้อหาหน้าเว็บผ่าน **Jina Reader (`https://r.jina.ai/...`)** พร้อม HTML-to-Text Fallback และแนบเนื้อหาเข้า Prompt ให้ DeepSeek วิเคราะห์ได้ทันที
+2. **Multi-Turn ReAct Agent Loop (สูงสุด 3 รอบ):**
+   DeepSeek R1 สามารถเรียกใช้เครื่องมือ (Tools) บน Proxmox CT ได้โดยตรงผ่านคำสั่ง:
+   - `[TOOL:WEB_SEARCH] <คำค้นหา>` — ค้นหาข้อมูลสดจากอินเทอร์เน็ตผ่าน DuckDuckGo Lite (`https://lite.duckduckgo.com/lite/`)
+   - `[TOOL:FETCH_URL] <https://...>` — เปิดอ่านเนื้อหาจาก URL ที่ต้องการ (ป้องกัน SSRF ด้วย `isSafePublicUrl`)
+   - `[TOOL:READ_FILE] <relative/path>` — เปิดอ่านไฟล์โค้ดภายใน Workspace (ป้องกัน Path Traversal / Symlink Escape ด้วย `safeReadWorkspaceFile`)
+   - `[TOOL:LIST_FILES]` — ดูรายชื่อไฟล์ทั้งหมดใน Workspace
+3. **ขยาย Context Window 4x (`num_ctx: 16384`) & Always-Stream (`stream: true`):**
+   ส่งพารามิเตอร์ `options: { num_ctx: 16384 }` ไปยัง Ollama API ของ KMITL เพื่อขยายความจำจาก 4,096 เป็น 16,384 tokens (แก้ปัญหา HTTP 400 Context Overflow) และบังคับใช้ `stream: true` ในทุกขั้นตอน (แก้ปัญหา Nginx ตัดสาย 504 Gateway Time-out ขณะโมเดลคิด `<think>` นานๆ)
+
+### 11.2 📊 ระบบคำนวณ Net Tokens & การลดการกิน Token ของ Codex
+- **แยก `Net Tokens` ออกจาก `Cached Tokens`:** OpenAI Codex CLI รายงาน `total_tokens` โดยรวม `cached_input_tokens` (ซึ่งคิดเป็น ~85% ของทั้งหมดจากการอ่านไฟล์ซ้ำใน Agent Loop) ระบบจึงคำนวณ **`net_tokens = total_tokens - cached_input_tokens`** และแสดงผลคู่กันทั้งบน Header (`Net Tok`), แถบ History, และ CLI (`ask_models.py`)
+- **แยกประเภทงานวิเคราะห์ (`detectTaskType` ใน `types.ts`):** คำสั่งประเภทถาม-ตอบ อธิบาย วิเคราะห์ หรือสรุป (`อธิบาย`, `วิเคราะห์`, `สรุป`, `เปรียบเทียบ`) จะถูกจัดเป็นโหมด `general` (Analysis) และสั่งห้าม Codex รันเชลล์สแกนไฟล์หรือโคลน Repo ซ้ำในรอบ Peer Review / Harmonization ช่วยลดการใช้ Token ลง 60–70%
 
 ---
 
@@ -541,6 +560,8 @@ BLMOVE tasks:queue tasks:processing RIGHT LEFT 3
 | **Process Group Kill** | `detached: true` และ `process.kill(-child.pid)` | กวาดล้างทั้งโปรเซสแม่และลูกหลาน (Grandchildren) ทั้งหมดเมื่อเกิด Timeout ป้องกัน Zombie Processes |
 | **Anti-OOM Buffer Cap** | จำกัด Logs ที่ 10MB (`MAX_OUTPUT_BYTES`) พร้อม Drain Stream | ป้องกัน Node.js หน่วยความจำเต็ม (OOM) เมื่อคำสั่งพ่น Output ปริมาณมหาศาล |
 | **OWASP Bearer Auth** | บังคับส่ง Header `Authorization: Bearer <token>` | ตัดการรับ Token ผ่าน URL Query String (`?key=`) ป้องกัน Token รั่วใน Web Logs |
+| **SSRF Guard สำหรับ Web Agent** | `isSafePublicUrl()` ใน `taskRunner.ts` | บล็อคการดึง URL ที่ชี้ไปยัง `localhost`, `127.0.0.1`, `10.x`, `172.16-31.x`, `192.168.x`, `169.254.x` และ `.local`/`.internal` ป้องกัน DeepSeek ถูกหลอกให้ยิงหา Internal Network |
+| **Safe Workspace File Reader** | `safeReadWorkspaceFile()` ใน `taskRunner.ts` | บังคับตรวจ `path.resolve` และ `fs.realpathSync` ก่อนอนุญาตให้ `[TOOL:READ_FILE]` ของ DeepSeek อ่านไฟล์ภายใน Workspace เท่านั้น |
 
 ---
 
@@ -586,6 +607,22 @@ pm2 save
 ---
 
 ## 17. 📝 บันทึกประวัติการพัฒนา (Changelog)
+
+### v2.3.0 (DeepSeek Web Agent, Auto Pre-Fetcher, Net Token Tracking & Consensus UX Overhaul)
+สรุปรายละเอียดการแก้ไขแยกตามไฟล์และส่วนประกอบ (`แก้ไรไปส่วนไหน`):
+
+| ไฟล์ที่แก้ไข | ส่วนประกอบ | รายละเอียดการแก้ไข |
+|---|---|---|
+| `dashboard/src/lib/taskRunner.ts` | **DeepSeek Engine & Pre-Fetcher** | • สร้าง `callKmitlDeepSeekStream()` ใช้ `stream: true` และ `options: { num_ctx: 16384 }` ทั้งรอบแรกและรอบ Peer Review แก้ปัญหา **504 Gateway Time-out** และ **400 Context Overflow (4096 tokens)**<br>• เพิ่ม `autoCloneGitHubRepoIfNeeded()` และ `buildWorkspaceSnapshot()` โคลนลิงก์ GitHub อัตโนมัติและดึงโครงสร้างโค้ดให้ทั้ง DeepSeek & Codex<br>• เพิ่ม `prefetchPromptWebUrls()`, `fetchWebPageText()`, `searchWebDuckDuckGo()` และ **ReAct Agent Loop** (`[TOOL:WEB_SEARCH]`, `[TOOL:FETCH_URL]`, `[TOOL:READ_FILE]`, `[TOOL:LIST_FILES]`) พร้อม `isSafePublicUrl()` (SSRF Guard) และ `safeReadWorkspaceFile()`<br>• เพิ่มคำสั่งจำกัดการรันเชลล์ซ้ำของ Codex ในรอบ Peer Review / Harmonization และปรับ `runTestGate()` ให้รองรับ `unittest discover -s tests` |
+| `dashboard/src/lib/types.ts` | **Token Math & Task Classifier** | • เพิ่มฟิลด์ `net_tokens`, ฟังก์ชัน `getNetTokens()`, `fmtTokenBadge()` แยก Token ที่ประมวลผลจริงออกจาก `cached_input_tokens`<br>• ปรับปรุง `detectTaskType()` ให้แยกงานวิเคราะห์/สรุป (`general`) ออกจากงานเขียน/แก้ไฟล์โค้ด (`code`) อย่างแม่นยำ<br>• เพิ่ม `diskFree`, `diskPercent`, `processingCount` ใน `SystemStatus` |
+| `dashboard/src/routes/api/status/+server.ts` | **System Status API (Queue & Disk)** | • ดึงข้อมูลพื้นที่ดิสก์คงเหลือ (`diskFree`), เปอร์เซ็นต์ที่ใช้ (`diskPercent`) จาก `df -h /`<br>• ดึงจำนวนงานที่กำลังรันจริง (`processingCount` จาก `tasks:processing`) คู่กับคิวรอ (`queueLength` จาก `tasks:queue`)<br>• คำนวณ `netTokens` รวมจากทุก Session ของ Codex |
+| `dashboard/src/lib/components/Header.svelte` | **Top Status Bar UI** | • แสดงป้ายสถานะ **คิวงานสด (`คิว: X รอ · Y รัน`)** และ **พื้นที่ดิสก์คงเหลือ (`พท.เหลือ: XXG`)** คู่กับ `RAM` และ `Net Tok` แบบ Real-time |
+| `dashboard/src/routes/+page.svelte` | **Main State & Refresh Fix** | • แก้บั๊ก `onMount` และ `fetchWorkspaces` ที่เคยบังคับเลือก `workspaces[0]` (`Android-Tv`) ทุกครั้งที่ Refresh หน้าเว็บ ให้คงสถานะเริ่มต้นที่ `'all'` (`Auto Temp` / ไม่เลือกโปรเจกต์) เสมอ |
+| `dashboard/src/lib/components/WorkspaceSidebar.svelte` | **Workspace Navigation UI** | • แยก **โปรเจกต์หลัก** ออกจากโฟลเดอร์ชั่วคราว และยุบรวมโฟลเดอร์ `temp-*` ไว้ใน **Collapsible Accordion** ที่พับเก็บเป็นค่าเริ่มต้น เพื่อไม่ให้ดันกล่อง `History` ตกขอบจอ |
+| `dashboard/src/lib/components/HistorySidebar.svelte` | **History Search & Filter UI** | • เพิ่มช่องค้นหาประวัติ (`ค้นหาประวัติแชท หรือคำสั่ง...`), ปุ่ม `+ งานใหม่`, แสดง `Net Tokens` และตัดคำนำหน้า `temp-` ให้อ่านง่าย |
+| `dashboard/src/lib/components/TaskInput.svelte` | **Prompt Composer UI** | • เพิ่มป้ายแสดง **พื้นที่รันงาน (`Auto Temp` หรือชื่อโปรเจกต์)** พร้อม Dropdown สลับโปรเจกต์ด่วนในกล่อง Prompt, คำอธิบายแต่ละโหมด AI และซ่อนช่อง `Branch: auto` ไว้ในปุ่มย่อ |
+| `dashboard/src/lib/components/ResultsViewer.svelte` | **Empty State & Quick Starters** | • เปลี่ยนหน้าว่าง (`Waiting for execution...`) เป็นหน้า **"วันนี้อยากให้ช่วยอะไร?"** พร้อมการ์ดเทมเพลตเริ่มต้นด่วน 4 รูปแบบ และรายการเปิดดูงานล่าสุด 4 งาน |
+| `scripts/ask_models.py` | **CLI Bridge Runner** | • แสดงผล `Net Tokens` คู่กับ `Total / Cached / Output Tokens` ใน Terminal |
 
 ### v2.2.0 (Security & Architecture Hardening - Post Audit)
 - 🛡️ **P0 Hardening:** เพิ่ม Canonical Realpath Symlink Guard ป้องกัน Symlink Escape

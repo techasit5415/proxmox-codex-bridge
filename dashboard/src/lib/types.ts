@@ -20,12 +20,15 @@ export interface SystemStatus {
 	status: string;
 	codexAuth: string;
 	diskUsage: string;
+	diskFree?: string;
+	diskPercent?: string;
 	memoryUsage: string;
 	nodeVersion: string;
 	codexVersion: string;
 	tokens?: TokenStats;
 	redisStatus?: string;
 	queueLength?: number;
+	processingCount?: number;
 }
 
 export interface WorkspaceDetails {
