@@ -12,16 +12,17 @@ When the user mentions or asks for:
    - Do NOT simulate, hallucinate, or pretend to be ChatGPT or DeepSeek.
    - Do NOT invent a fake roundtable, summit, or mock dialog in place of real model outputs.
 2. EXECUTE DIRECTLY VIA THE PERMANENT BRIDGE TOOL (DO NOT CREATE SCRATCH SCRIPTS):
-   - The bridge runner is installed at `~/.gemini/config/ask_models.py` (or `%USERPROFILE%\.gemini\config\ask_models.py`).
-   - Run via `run_command`:
-     - To run Multi-Agent Consensus Loop (Proposals -> Peer Review -> Harmonization):
-       `python ~/.gemini/config/ask_models.py --consensus "<user prompt>"`
-     - To query both models simultaneously (Dual Mode / Compare):
-       `python ~/.gemini/config/ask_models.py --both "<user prompt>"`
-     - To query Codex only:
-       `python ~/.gemini/config/ask_models.py --codex "<user prompt>"`
-     - To query DeepSeek only:
-       `python ~/.gemini/config/ask_models.py --deepseek "<user prompt>"`
+   - The bridge runner is installed at `~/.gemini/config/ask_models.py`.
+   - On Windows (PowerShell):
+     - Multi-Agent Consensus: `python "$HOME/.gemini/config/ask_models.py" --consensus "<user prompt>"`
+     - Dual Mode (Compare):  `python "$HOME/.gemini/config/ask_models.py" --both "<user prompt>"`
+     - Codex Only:            `python "$HOME/.gemini/config/ask_models.py" --codex "<user prompt>"`
+     - DeepSeek Only:         `python "$HOME/.gemini/config/ask_models.py" --deepseek "<user prompt>"`
+   - On Linux/macOS:
+     - Multi-Agent Consensus: `python3 ~/.gemini/config/ask_models.py --consensus "<user prompt>"`
+     - Dual Mode (Compare):  `python3 ~/.gemini/config/ask_models.py --both "<user prompt>"`
+     - Codex Only:            `python3 ~/.gemini/config/ask_models.py --codex "<user prompt>"`
+     - DeepSeek Only:         `python3 ~/.gemini/config/ask_models.py --deepseek "<user prompt>"`
 3. REPORT REAL LOGS & OUTPUTS:
    - Present the actual responses returned by the Proxmox bridge tool.
    - Inform the user that the task run is recorded in the dashboard at `http://192.168.5.159:3000`.

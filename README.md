@@ -171,18 +171,24 @@ flowchart TB
    - เลือกโมเดลที่ต้องการรัน (`Codex`, `DeepSeek`, `Dual Mode`, หรือ `Consensus`)
    - พิมพ์ข้อความสั่งงาน แล้วกด **Run Task**
 
-2. **ใช้งานผ่าน CLI Runner บน Windows Host:**
-   เปิด PowerShell แล้วสั่งงานได้ทันที:
-   ```powershell
-   # สอบถามหรือสั่งงาน OpenAI Codex (ChatGPT Plus: gpt-6.1-sol)
-   python C:\Users\techa\.gemini\config\ask_models.py --codex "วิเคราะห์โค้ดในโปรเจกต์นี้"
+2. **ใช้งานผ่าน CLI Runner บนเครื่อง Client (Windows / Mac / Linux):**
+   - **บน Windows (PowerShell):**
+     ```powershell
+     # สอบถามหรือสั่งงาน OpenAI Codex (ChatGPT Plus: gpt-6.1-sol)
+     python "$HOME/.gemini/config/ask_models.py" --codex "วิเคราะห์โค้ดในโปรเจกต์นี้"
 
-   # สั่งงาน DeepSeek R1 14b บน GPU Cluster
-   python C:\Users\techa\.gemini\config\ask_models.py --deepseek "เขียนฟังก์ชันคำนวณ Fibonacci แบบ DP"
+     # สั่งงาน DeepSeek R1 14b บน GPU Cluster
+     python "$HOME/.gemini/config/ask_models.py" --deepseek "เขียนฟังก์ชันคำนวณ Fibonacci แบบ DP"
 
-   # สั่งงานแบบ Consensus (Codex + DeepSeek ทำ Peer Review และ Harmonize ร่วมกัน)
-   python C:\Users\techa\.gemini\config\ask_models.py --consensus "ออกแบบ Database Schema สำหรับระบบ E-commerce"
-   ```
+     # สั่งงานแบบ Consensus (Codex + DeepSeek ทำ Peer Review และ Harmonize ร่วมกัน)
+     python "$HOME/.gemini/config/ask_models.py" --consensus "ออกแบบ Database Schema สำหรับระบบ E-commerce"
+     ```
+   - **บน macOS / Linux (Terminal):**
+     ```bash
+     python3 ~/.gemini/config/ask_models.py --codex "วิเคราะห์โค้ดในโปรเจกต์นี้"
+     python3 ~/.gemini/config/ask_models.py --both "เปรียบเทียบคำตอบ 2 โมเดล"
+     python3 ~/.gemini/config/ask_models.py --consensus "ออกแบบ Database Schema"
+     ```
 
 ---
 
@@ -214,9 +220,11 @@ python3 proxmox-codex-bridge/scripts/setup_client.py
 ```
 
 สคริปต์จะทำการ:
-1. สร้างโฟลเดอร์ `~/.gemini/config/rules/` ให้อัตโนมัติ
-2. คัดลอก `ask_models.py` และ `proxmox-codex-bridge.md` เข้าสู่ตำแหน่งคอนฟิกของระบบ
-3. ทำการทดสอบเชื่อมต่อ (Ping Check) ไปยัง Bridge Server เพื่อยืนยันความพร้อมใช้งานทันที
+1. สร้างและบันทึกการตั้งค่าถาวร `~/.gemini/config/bridge_config.json` (จำ IP/URL และ API Key อัตโนมัติ)
+2. คัดลอก `ask_models.py` และสร้าง Wrapper บน Windows (`ask.bat` & `ask.ps1`)
+3. ติดตั้ง Antigravity Rules ใน `GEMINI.md`, `AGENTS.md`, และ `rules/proxmox-codex-bridge.md`
+4. ตั้งค่า **Antigravity MCP Server (`mcp_config.json`)** เพื่อให้ Antigravity เรียกใช้ Tool ของ Proxmox ได้โดยตรง
+5. ตรวจสอบการเชื่อมต่อ HTTP API และตรวจสอบสิทธิ์ SSH Passwordless Authentication เพื่อความพร้อมใช้งาน 100%
 
 ---
 

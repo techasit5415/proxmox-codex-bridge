@@ -16,8 +16,24 @@ import urllib.error
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-DEFAULT_BRIDGE_URL = os.environ.get("PROXMOX_BRIDGE_URL", "http://192.168.5.159:3000/api/task")
-API_KEY = os.environ.get("BRIDGE_API_KEY", "")
+def load_saved_config():
+    cfg_path = os.path.expanduser("~/.gemini/config/bridge_config.json")
+    if os.path.isfile(cfg_path):
+        try:
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+_saved_cfg = load_saved_config()
+_raw_url = os.environ.get("PROXMOX_BRIDGE_URL") or _saved_cfg.get("bridge_url") or "http://192.168.5.159:3000"
+if not _raw_url.endswith("/api/task"):
+    DEFAULT_BRIDGE_URL = _raw_url.rstrip("/") + "/api/task"
+else:
+    DEFAULT_BRIDGE_URL = _raw_url
+
+API_KEY = os.environ.get("BRIDGE_API_KEY") or _saved_cfg.get("api_key") or ""
 
 def get_base_url(task_url: str) -> str:
     if "/api" in task_url:
