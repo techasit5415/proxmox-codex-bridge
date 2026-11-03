@@ -7,7 +7,7 @@ async function update() {
   const res = await fetch('https://aipass.cskmitl.com/api/chat', {
     method: 'POST',
     headers: {
-      'Authorization': 'Bearer gpu_910c7fbfed984909803659c2885e0d320746a068',
+      'Authorization': 'Bearer your_kmitl_gpu_token_here',
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({

@@ -1,5 +1,5 @@
 const KMITL_API_URL = 'https://aipass.cskmitl.com/v1/chat/completions';
-const KMITL_TOKEN = 'gpu_910c7fbfed984909803659c2885e0d320746a068';
+const KMITL_TOKEN = process.env.KMITL_TOKEN || '';
 const DEEPSEEK_MODEL = 'deepseek-r1:14b';
 
 async function test() {

@@ -22,7 +22,7 @@ export const DEFAULT_MODELS: AIModelConfig[] = [
 		name: 'DeepSeek R1 (14b GPU)',
 		type: 'ollama',
 		endpoint: 'https://aipass.cskmitl.com/api/chat',
-		apiKey: 'gpu_910c7fbfed984909803659c2885e0d320746a068',
+		apiKey: process.env.KMITL_TOKEN || '',
 		modelId: 'deepseek-r1:14b',
 		badge: 'DeepSeek R1',
 		color: 'violet',
