@@ -22,20 +22,16 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// Initialize directly from SSR PageData so server-rendered HTML contains all items
-	const initWorkspaces = data.workspaces || [];
-	const initHistory = data.history || [];
-
 	// State
 	let status = $state<SystemStatus | null>(null);
-	let workspaces = $state<string[]>(initWorkspaces);
+	let workspaces = $state<string[]>(data.workspaces || []);
 	let activeWs = $state<string>('all');
 	let wsDetails = $state<WorkspaceDetails | null>(null);
 	let models = $state<AIModelConfig[]>([]);
 	let showSettingsModal = $state<boolean>(false);
 
 	// History state
-	let history = $state<TaskRecord[]>(initHistory);
+	let history = $state<TaskRecord[]>(data.history || []);
 	let selectedTaskId = $state<string | null>(null);
 	let isLoadingHistory = $state<boolean>(false);
 
@@ -51,18 +47,7 @@
 	let dualCodex = $state<TaskResult | null>(null);
 	let dualDeepSeek = $state<TaskResult | null>(null);
 	let consensusResult = $state<ConsensusData | null>(null);
-	let tokenStats = $state<TokenStats | null>(
-		initHistory[0]?.tokens
-			? {
-					totalTokens: initHistory[0].tokens.total_tokens || 0,
-					inputTokens: initHistory[0].tokens.input_tokens || 0,
-					cachedTokens: initHistory[0].tokens.cached_input_tokens || 0,
-					outputTokens: initHistory[0].tokens.output_tokens || 0,
-					sessionCount: initHistory.length,
-					latest: initHistory[0].tokens
-				}
-			: null
-	);
+	let tokenStats = $state<TokenStats | null>(null);
 
 	// Modal
 	let showCloneModal = $state<boolean>(false);
@@ -141,7 +126,7 @@
 	async function fetchHistory(autoSelectLatest = false) {
 		isLoadingHistory = true;
 		try {
-			const res = await fetch('/api/history');
+			const res = await fetch('/api/history?summary=true');
 			if (res.ok) {
 				const d = await res.json();
 				history = d.history || [];
@@ -156,7 +141,7 @@
 		}
 	}
 
-	function selectHistoryTask(item: TaskRecord) {
+	async function selectHistoryTask(item: TaskRecord) {
 		selectedTaskId = item.id;
 		prompt = item.prompt || '';
 		branch = item.branch || '';
@@ -165,31 +150,49 @@
 			fetchWorkspaceDetails(item.workspace);
 		}
 
-		if (item.mode === 'consensus' && item.consensus) {
-			consensusResult = item.consensus;
+		let fullItem = item;
+		// If task was loaded as summary (no logs/diff/codex/consensus), fetch full task details
+		if (!item.logs && !item.diff && !item.codex && !item.consensus) {
+			try {
+				const res = await fetch(`/api/history?id=${encodeURIComponent(item.id)}`);
+				if (res.ok) {
+					const d = await res.json();
+					if (d.task) {
+						fullItem = d.task;
+						const idx = history.findIndex((h) => h.id === item.id);
+						if (idx !== -1) history[idx] = fullItem;
+					}
+				}
+			} catch (e) {
+				console.error('Failed to load task details:', e);
+			}
+		}
+
+		if (fullItem.mode === 'consensus' && fullItem.consensus) {
+			consensusResult = fullItem.consensus;
 			dualCodex = null;
 			dualDeepSeek = null;
 			singleResult = null;
 			provider = 'consensus';
-		} else if (item.mode === 'both' && item.codex && item.deepseek) {
-			dualCodex = item.codex;
-			dualDeepSeek = item.deepseek;
+		} else if (fullItem.mode === 'both' && fullItem.codex && fullItem.deepseek) {
+			dualCodex = fullItem.codex;
+			dualDeepSeek = fullItem.deepseek;
 			consensusResult = null;
 			singleResult = null;
 			provider = 'both';
 		} else {
 			singleResult = {
-				provider: item.provider,
-				branch: item.branch,
-				status: item.status,
-				diff: item.diff,
-				logs: item.logs,
-				tokens: item.tokens
+				provider: fullItem.provider,
+				branch: fullItem.branch,
+				status: fullItem.status,
+				diff: fullItem.diff || '',
+				logs: fullItem.logs || '',
+				tokens: fullItem.tokens
 			};
 			dualCodex = null;
 			dualDeepSeek = null;
 			consensusResult = null;
-			if (item.provider?.includes('DeepSeek')) {
+			if (fullItem.provider?.includes('DeepSeek')) {
 				provider = 'deepseek';
 			} else {
 				provider = 'codex';
@@ -199,14 +202,14 @@
 		taskBadge = 'Loaded from History';
 		taskBadgeType = 'idle';
 
-		if (item.tokens) {
+		if (fullItem.tokens) {
 			tokenStats = {
-				totalTokens: item.tokens.total_tokens || 0,
-				inputTokens: item.tokens.input_tokens || 0,
-				cachedTokens: item.tokens.cached_input_tokens || 0,
-				outputTokens: item.tokens.output_tokens || 0,
+				totalTokens: fullItem.tokens.total_tokens || 0,
+				inputTokens: fullItem.tokens.input_tokens || 0,
+				cachedTokens: fullItem.tokens.cached_input_tokens || 0,
+				outputTokens: fullItem.tokens.output_tokens || 0,
 				sessionCount: history.length,
-				latest: item.tokens
+				latest: fullItem.tokens
 			};
 		}
 	}
@@ -449,6 +452,16 @@
 		}
 		if (data.history && data.history.length > 0) {
 			history = data.history;
+			if (data.history[0]?.tokens) {
+				tokenStats = {
+					totalTokens: data.history[0].tokens.total_tokens || 0,
+					inputTokens: data.history[0].tokens.input_tokens || 0,
+					cachedTokens: data.history[0].tokens.cached_input_tokens || 0,
+					outputTokens: data.history[0].tokens.output_tokens || 0,
+					sessionCount: data.history.length,
+					latest: data.history[0].tokens
+				};
+			}
 		}
 
 		fetchStatus();
@@ -463,14 +476,14 @@
 		const historyInterval = setInterval(async () => {
 			if (!isExecuting) {
 				try {
-					const res = await fetch('/api/history');
+					const res = await fetch('/api/history?summary=true');
 					if (res.ok) {
 						const d = await res.json();
 						history = d.history || [];
 					}
 				} catch (e) {}
 			}
-		}, 4000);
+		}, 5000);
 
 		return () => {
 			clearInterval(statusInterval);

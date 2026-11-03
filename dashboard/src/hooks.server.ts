@@ -1,4 +1,3 @@
-import type { Handle } from '@sveltejs/kit';
 import { startTaskWorker } from '$lib/queue';
 
 // Start Redis background task worker
@@ -12,8 +11,13 @@ if (BRIDGE_API_KEY) {
 	console.warn('[SECURITY NOTICE] BRIDGE_API_KEY is not configured. /api/* endpoints are running in unauthenticated mode.');
 }
 
-export const handle: Handle = async ({ event, resolve }) => {
+export const handle = async ({ event, resolve }: { event: any; resolve: any }) => {
 	const pathname = event.url.pathname;
+
+	// Quietly return 204 for /favicon.ico if static icon is requested
+	if (pathname === '/favicon.ico') {
+		return new Response(null, { status: 204 });
+	}
 
 	// Enforce API Key authentication if BRIDGE_API_KEY is set (Bearer Token in Header only, OWASP-compliant)
 	if (BRIDGE_API_KEY && pathname.startsWith('/api')) {
@@ -34,4 +38,14 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	return resolve(event);
+};
+
+export const handleError = ({ error, event, status, message }: { error: any; event: any; status: number; message: string }) => {
+	if (event?.url?.pathname === '/favicon.ico') {
+		return { message: 'Not found' };
+	}
+	console.error(`[SSR Server Error ${status}] on ${event?.url?.pathname}:`, error);
+	return {
+		message: message || 'Internal Server Error'
+	};
 };

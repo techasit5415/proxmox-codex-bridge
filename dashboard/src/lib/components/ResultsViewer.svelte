@@ -305,16 +305,19 @@
 		<!-- THOUGHTS & REASONING TAB -->
 		{#if activeTab === 'thoughts'}
 			{#if consensusResult}
-				<ConsensusView {consensusResult} />
+				<ConsensusView consensus={consensusResult} />
 			{:else if dualCodex && dualDeepSeek}
 				<DualCompareView 
-					{dualCodex} 
-					{dualDeepSeek} 
+					codex={dualCodex} 
+					deepseek={dualDeepSeek} 
 					{activeModelView} 
-					onSwitchView={(v) => (activeModelView = v)} 
+					onChangeModelView={(v) => (activeModelView = v)} 
 				/>
 			{:else if singleResult}
-				<SingleResultView result={singleResult} />
+				<SingleResultView 
+					result={singleResult} 
+					onViewDiffTab={() => (activeTab = 'diff')} 
+				/>
 			{:else if terminalLogs}
 				<pre class="text-zinc-300 whitespace-pre-wrap">{terminalLogs}</pre>
 			{:else}

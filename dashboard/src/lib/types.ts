@@ -69,6 +69,20 @@ export interface ConsensusData {
 
 export type TaskJobStatus = 'queued' | 'running' | 'validating' | 'completed' | 'failed' | 'cancelled';
 
+export interface TaskJobData {
+	id: string;
+	workspace: string;
+	prompt: string;
+	provider: string;
+	branch?: string;
+	status: TaskJobStatus;
+	createdAt: number;
+	startedAt?: number;
+	completedAt?: number;
+	result?: any;
+	error?: string;
+}
+
 export interface TaskRecord {
 	id: string;
 	timestamp: number;
@@ -78,8 +92,8 @@ export interface TaskRecord {
 	prompt: string;
 	branch: string;
 	status: string;
-	diff: string;
-	logs: string;
+	diff?: string;
+	logs?: string;
 	tokens?: TokenUsage;
 	mode?: 'single' | 'both' | 'consensus';
 	codex?: TaskResult;

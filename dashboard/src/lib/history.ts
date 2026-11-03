@@ -1,28 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-
-export interface TaskRecord {
-	id: string;
-	timestamp: number;
-	date: string;
-	workspace: string;
-	provider: string;
-	prompt: string;
-	branch: string;
-	status: string;
-	diff: string;
-	logs: string;
-	tokens: {
-		total_tokens: number;
-		input_tokens: number;
-		cached_input_tokens: number;
-		output_tokens: number;
-	};
-	mode?: 'single' | 'both' | 'consensus';
-	codex?: any;
-	deepseek?: any;
-	consensus?: any;
-}
+import type { TaskRecord, TokenUsage, TestEvidence } from './types';
+export type { TaskRecord };
 
 const HISTORY_FILE = '/opt/agent-bridge/tasks_history.json';
 const SESSIONS_BASE = '/root/.codex/sessions';
@@ -48,7 +27,9 @@ export function loadExistingHistory(): TaskRecord[] {
 	try {
 		if (fs.existsSync(HISTORY_FILE)) {
 			const data = fs.readFileSync(HISTORY_FILE, 'utf8');
-			return JSON.parse(data);
+			if (!data.trim()) return [];
+			const parsed = JSON.parse(data);
+			return Array.isArray(parsed) ? parsed : [];
 		}
 	} catch (e) {
 		console.error('Error reading history file:', e);
@@ -56,10 +37,30 @@ export function loadExistingHistory(): TaskRecord[] {
 	return [];
 }
 
+export function loadHistorySummaries(limit = 40): TaskRecord[] {
+	const history = loadExistingHistory();
+	return history.slice(0, limit).map((t) => ({
+		id: t.id,
+		timestamp: t.timestamp,
+		date: t.date,
+		workspace: t.workspace,
+		provider: t.provider,
+		prompt: t.prompt,
+		branch: t.branch,
+		status: t.status,
+		mode: t.mode,
+		tokens: t.tokens,
+		diff: '',
+		logs: ''
+	}));
+}
+
 export function saveHistory(records: TaskRecord[]) {
 	try {
 		fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
-		fs.writeFileSync(HISTORY_FILE, JSON.stringify(records, null, 2), 'utf8');
+		const tmpFile = `${HISTORY_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
+		fs.writeFileSync(tmpFile, JSON.stringify(records, null, 2), 'utf8');
+		fs.renameSync(tmpFile, HISTORY_FILE);
 	} catch (e) {
 		console.error('Error saving history file:', e);
 	}
@@ -79,11 +80,12 @@ export function saveTaskToHistory(task: Omit<TaskRecord, 'id' | 'timestamp' | 'd
 		status: task.status || 'Clean',
 		diff: task.diff || '',
 		logs: task.logs || '',
-		tokens: task.tokens || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+		tokens: task.tokens,
 		mode: task.mode || 'single',
 		codex: task.codex,
 		deepseek: task.deepseek,
-		consensus: task.consensus
+		consensus: task.consensus,
+		testEvidence: task.testEvidence
 	};
 
 	// Prepend new record
@@ -155,6 +157,12 @@ export function scanAndSyncCodexSessions(): TaskRecord[] {
 						cwd = obj.payload.cwd;
 					}
 
+					// Skip temporary worktree sessions
+					if (cwd && cwd.includes('.worktrees')) {
+						prompt = '';
+						break;
+					}
+
 					if (
 						obj.type === 'event_msg' &&
 						obj.payload?.type === 'item_completed' &&
@@ -203,6 +211,10 @@ export function scanAndSyncCodexSessions(): TaskRecord[] {
 				logsText = thoughtLines.join('\n\n');
 			} else {
 				logsText = `Session file: ${path.basename(file)}`;
+			}
+
+			if (cwd && cwd.includes('.worktrees')) {
+				continue;
 			}
 
 			const record: TaskRecord = {

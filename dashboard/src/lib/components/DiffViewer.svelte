@@ -4,7 +4,7 @@
 	interface Props {
 		diff: string;
 		branch?: string;
-		providerColor?: 'emerald' | 'violet' | 'zinc';
+		providerColor?: 'emerald' | 'violet' | 'amber' | 'zinc';
 		collapsible?: boolean;
 		defaultExpanded?: boolean;
 	}
@@ -40,6 +40,11 @@
 			border: 'border-violet-900/40',
 			text: 'text-violet-300',
 			diffText: 'text-violet-200'
+		},
+		amber: {
+			border: 'border-amber-900/40',
+			text: 'text-amber-300',
+			diffText: 'text-amber-200'
 		},
 		zinc: {
 			border: 'border-zinc-800',
