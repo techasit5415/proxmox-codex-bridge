@@ -78,8 +78,12 @@
 			</div>
 		</div>
 
+		{#if finalParsed.thoughts}
+			<ChainOfThought thoughts={finalParsed.thoughts} defaultExpanded={false} />
+		{/if}
+
 		<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2">
-			<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+			<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-sans text-xs select-text">
 				{finalParsed.body || consensus.finalSolution?.logs || '(No output recorded)'}
 			</div>
 		</div>
@@ -126,8 +130,12 @@
 				<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300">Auditor: Codex</span>
 			</div>
 
+			{#if codexRevParsed.thoughts}
+				<ChainOfThought thoughts={codexRevParsed.thoughts} defaultExpanded={false} />
+			{/if}
+
 			<div class="rounded-b-lg border-x border-b border-zinc-800 bg-zinc-900/40 p-3.5">
-				<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+				<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-sans text-xs select-text">
 					{codexRevParsed.body || consensus.codexReviewOfDeepSeek || '(No review recorded)'}
 				</div>
 			</div>
@@ -148,8 +156,12 @@
 				<span class="text-[11px] text-emerald-400">{fmtTokenBadge(consensus.codexProposal?.tokens)}</span>
 			</div>
 
+			{#if codexPropParsed.thoughts}
+				<ChainOfThought thoughts={codexPropParsed.thoughts} defaultExpanded={false} />
+			{/if}
+
 			<div class="rounded-b-lg border-x border-b border-zinc-800 bg-zinc-900/40 p-3 flex flex-col gap-2 max-h-96 overflow-y-auto">
-				<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-mono text-xs select-text">
+				<div class="text-zinc-200 whitespace-pre-wrap leading-relaxed font-sans text-xs select-text">
 					{codexPropParsed.body || consensus.codexProposal?.logs || '(No output recorded)'}
 				</div>
 			</div>

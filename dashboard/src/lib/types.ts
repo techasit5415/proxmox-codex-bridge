@@ -209,44 +209,53 @@ export function detectTaskType(prompt: string): 'code' | 'general' {
 export function extractThoughtAndBody(raw: string): { thoughts: string; body: string } {
 	if (!raw) return { thoughts: '', body: '' };
 
-	// Check for DeepSeek <think>...</think>
+	// 1. Check for <think>...</think> (DeepSeek R1 or pre-wrapped thoughts)
 	const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/i);
 	if (thinkMatch) {
+		const cleanedBody = raw.replace(/<think>[\s\S]*?<\/think>/i, '').trim();
+		// If the remaining body STILL contains a raw OpenAI Codex stderr dump, recursively clean it
+		if (cleanedBody.includes('OpenAI Codex v')) {
+			const nested = extractThoughtAndBody(cleanedBody);
+			return {
+				thoughts: [thinkMatch[1].trim(), nested.thoughts].filter(Boolean).join('\n\n'),
+				body: nested.body
+			};
+		}
 		return {
 			thoughts: thinkMatch[1].trim(),
-			body: raw.replace(/<think>[\s\S]*?<\/think>/i, '').trim()
+			body: cleanedBody
 		};
 	}
 
-	// Check for Codex reasoning / planning blocks
-	if (raw.includes('OpenAI Codex') || raw.includes('exec\n') || raw.includes('I’ll') || raw.includes("I'll")) {
-		const lines = raw.split('\n');
-		const thoughts: string[] = [];
-		const other: string[] = [];
+	// 2. Check for OpenAI Codex CLI session transcript ("OpenAI Codex v...")
+	const codexHeaderIdx = raw.indexOf('OpenAI Codex v');
+	if (codexHeaderIdx !== -1) {
+		const stdoutPart = raw.slice(0, codexHeaderIdx).trim();
+		const stderrPart = raw.slice(codexHeaderIdx).trim();
 
-		for (const line of lines) {
-			if (
-				line.startsWith('codex') ||
-				line.startsWith('user') ||
-				line.includes('I’ll') ||
-				line.includes("I'll") ||
-				line.includes('Created') ||
-				line.startsWith('$') ||
-				line.startsWith('rg ')
-			) {
-				thoughts.push(line);
-			} else {
-				other.push(line);
-			}
+		// Extract clean final answer: prefer stdoutPart; if empty, extract after the last "\ncodex\n" in stderrPart
+		let cleanBody = stdoutPart;
+		const lastCodexMarker = stderrPart.lastIndexOf('\ncodex\n');
+		if (!cleanBody && lastCodexMarker !== -1) {
+			cleanBody = stderrPart
+				.slice(lastCodexMarker + '\ncodex\n'.length)
+				.replace(/\r?\ntokens used\r?\n[\d,.\s]+$/i, '')
+				.trim();
 		}
+		cleanBody = cleanBody.replace(/\r?\ntokens used\r?\n[\d,.\s]+$/i, '').trim();
+
+		// Build compact thoughts trace from stderrPart WITHOUT the echoed user prompt and WITHOUT the duplicate final answer
+		let traceSection = lastCodexMarker !== -1 ? stderrPart.slice(0, lastCodexMarker) : stderrPart;
+		// Strip the echoed "user\n..." prompt block up to the first "\ncodex\n" or "\nexec\n"
+		traceSection = traceSection.replace(/\nuser\r?\n[\s\S]*?(?=(\n(?:codex|exec)\r?\n|$))/i, '');
 
 		return {
-			thoughts: thoughts.join('\n'),
-			body: other.length > 0 ? other.join('\n') : raw
+			thoughts: traceSection.trim(),
+			body: cleanBody || raw
 		};
 	}
 
-	return { thoughts: '', body: raw };
+	return { thoughts: '', body: raw.replace(/\r?\ntokens used\r?\n[\d,.\s]+$/i, '').trim() };
 }
 
 export interface AIModelConfig {

@@ -3,7 +3,7 @@ import util from 'util';
 import path from 'path';
 import fs from 'fs';
 import { saveTaskToHistory } from './history';
-import { detectTaskType } from './types';
+import { detectTaskType, extractThoughtAndBody } from './types';
 import type { AIModelConfig, TaskResult, TestEvidence, TaskJobData } from './types';
 import { getModels } from './models';
 
@@ -1422,6 +1422,9 @@ export async function executeTaskPipeline(
 		}
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 2: Bilateral Cross-Review (Streaming)...' });
+		const cleanCodexPropBody = extractThoughtAndBody(codexProp.logs || '').body || codexProp.logs || '';
+		const cleanDeepseekPropBody = extractThoughtAndBody(deepseekProp.logs || '').body || deepseekProp.logs || '';
+
 		const deepseekReviewPrompt = `[TASK TYPE: GENERAL CONSULTATION / PEER REVIEW AUDIT]
 You are a Principal Software Architect & Auditor conducting a peer review of a solution proposed by OpenAI Codex for the following task.
 
@@ -1429,7 +1432,7 @@ You are a Principal Software Architect & Auditor conducting a peer review of a s
 ${prompt}
 
 === OPENAI CODEX PROPOSAL & OUTPUT ===
-${sanitizeForApi(codexProp.logs, 4500)}
+${sanitizeForApi(cleanCodexPropBody, 4500)}
 
 === CODEX'S GIT DIFF ===
 ${sanitizeForApi(codexProp.diff || '(No diff recorded)', 2500)}
@@ -1447,7 +1450,7 @@ IMPORTANT TOKEN-SAVING RULE: Do NOT execute any shell commands (no rg, no cat, n
 ${prompt}
 
 === DEEPSEEK R1 PROPOSAL & OUTPUT ===
-${sanitizeForApi(deepseekProp.logs, 5000)}
+${sanitizeForApi(cleanDeepseekPropBody, 5000)}
 
 === DEEPSEEK R1 GIT DIFF ===
 ${sanitizeForApi(deepseekProp.diff || '(No diff recorded)', 2500)}
@@ -1497,6 +1500,9 @@ Please provide your rigorous peer review in Thai (and English for technical term
 2. Apply the final, production-ready code directly into the workspace files without unnecessary re-scanning.
 3. Conclude with a clear Consensus Summary explaining what was harmonized and why this consensus is superior to each individual proposal alone.`;
 
+		const cleanDeepseekRevBody = extractThoughtAndBody(deepseekReviewOfCodex || '').body || deepseekReviewOfCodex || '';
+		const cleanCodexRevBody = extractThoughtAndBody(codexReviewOfDeepSeek || '').body || codexReviewOfDeepSeek || '';
+
 		const consensusPrompt = `[TASK TYPE: CONSENSUS HARMONIZATION & FINAL IMPLEMENTATION]
 You are the Lead Consensus Multi-Agent Orchestrator.
 We have executed a multi-agent debate and peer review between OpenAI Codex and DeepSeek R1.
@@ -1505,18 +1511,18 @@ We have executed a multi-agent debate and peer review between OpenAI Codex and D
 ${prompt}
 
 === PROPOSAL A (Codex) ===
-${codexProp.logs.slice(0, 5000)}
+${cleanCodexPropBody.slice(0, 4500)}
 Diff: ${sanitizeForApi(codexProp.diff || 'none', 2500)}
 
 === PEER REVIEW OF PROPOSAL A (by DeepSeek R1) ===
-${deepseekReviewOfCodex.slice(0, 3500)}
+${cleanDeepseekRevBody.slice(0, 3500)}
 
 === PROPOSAL B (DeepSeek R1) ===
-${deepseekProp.logs.slice(0, 5000)}
+${cleanDeepseekPropBody.slice(0, 4500)}
 Diff: ${sanitizeForApi(deepseekProp.diff || 'none', 2500)}
 
 === PEER REVIEW OF PROPOSAL B (by Codex) ===
-${codexReviewOfDeepSeek.slice(0, 3500)}
+${cleanCodexRevBody.slice(0, 3500)}
 
 ${mandateRules}`;
 
