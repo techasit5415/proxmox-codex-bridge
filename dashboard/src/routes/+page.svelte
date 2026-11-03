@@ -22,7 +22,7 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// State
+	// State: Default to 'all' (Unselected / Auto-Temp mode) — NEVER auto-select first workspace on refresh!
 	let status = $state<SystemStatus | null>(null);
 	let workspaces = $state<string[]>(data.workspaces || []);
 	let activeWs = $state<string>('all');
@@ -57,7 +57,6 @@
 	let isRunningCmd = $state<boolean>(false);
 	let terminalLogs = $state<string>('');
 
-
 	async function fetchStatus() {
 		try {
 			const res = await fetch('/api/status');
@@ -75,11 +74,15 @@
 			const res = await fetch('/api/workspaces');
 			if (res.ok) {
 				const d = await res.json();
-				workspaces = d.workspaces;
-				if (!workspaces.includes(activeWs) && workspaces.length > 0) {
-					activeWs = workspaces[0];
+				workspaces = d.workspaces || [];
+				// Only reset to 'all' if a specific workspace was selected and later deleted;
+				// NEVER force workspaces[0] ('Android-Tv') when activeWs is 'all' or 'auto-temp'!
+				if (activeWs !== 'all' && activeWs !== 'auto-temp' && !workspaces.includes(activeWs)) {
+					activeWs = 'all';
+					wsDetails = null;
+				} else if (activeWs && activeWs !== 'all' && activeWs !== 'auto-temp') {
+					fetchWorkspaceDetails(activeWs);
 				}
-				fetchWorkspaceDetails(activeWs);
 			}
 		} catch (e) {
 			console.error(e);
@@ -87,8 +90,12 @@
 	}
 
 	async function fetchWorkspaceDetails(name: string) {
+		if (!name || name === 'all' || name === 'auto-temp') {
+			wsDetails = null;
+			return;
+		}
 		try {
-			const res = await fetch(`/api/workspaces/${name}`);
+			const res = await fetch(`/api/workspaces/${encodeURIComponent(name)}`);
 			if (res.ok) wsDetails = await res.json();
 		} catch (e) {
 			console.error(e);
@@ -123,6 +130,12 @@
 		}
 	}
 
+	function handleApplyStarter(starterPrompt: string, starterProvider: 'codex' | 'deepseek' | 'both' | 'consensus') {
+		selectedTaskId = null;
+		prompt = starterPrompt;
+		provider = starterProvider;
+	}
+
 	async function fetchHistory(autoSelectLatest = false) {
 		isLoadingHistory = true;
 		try {
@@ -146,7 +159,7 @@
 		prompt = item.prompt || '';
 		branch = item.branch || '';
 		
-		if (item.workspace && workspaces.includes(item.workspace)) {
+		if (item.workspace && workspaces.includes(item.workspace) && !item.workspace.startsWith('temp-')) {
 			fetchWorkspaceDetails(item.workspace);
 		}
 
@@ -225,6 +238,7 @@
 		dualCodex = null;
 		dualDeepSeek = null;
 		consensusResult = null;
+		terminalLogs = '';
 		taskBadge = 'Ready';
 		taskBadgeType = 'idle';
 		fetchStatus();
@@ -268,10 +282,7 @@
 							isExecuting = false;
 
 							const result = event.result || {};
-							if (result.workspace && activeWs !== 'all' && result.workspace !== activeWs) {
-								activeWs = result.workspace;
-								await fetchWorkspaces();
-							}
+							await fetchWorkspaces();
 
 							if (result.mode === 'consensus') {
 								consensusResult = result.consensus;
@@ -290,7 +301,9 @@
 								consensusResult = null;
 							}
 
-							fetchWorkspaceDetails(activeWs);
+							if (activeWs && activeWs !== 'all' && activeWs !== 'auto-temp') {
+								fetchWorkspaceDetails(activeWs);
+							}
 							fetchStatus();
 							await fetchHistory(false);
 						} else if (event.type === 'error') {
@@ -319,11 +332,7 @@
 			if (d.success) {
 				taskBadge = 'Completed';
 				taskBadgeType = 'success';
-				
-				if (d.workspace && activeWs !== 'all' && d.workspace !== activeWs) {
-					activeWs = d.workspace;
-					await fetchWorkspaces();
-				}
+				await fetchWorkspaces();
 
 				if (d.mode === 'consensus') {
 					consensusResult = d.consensus;
@@ -342,7 +351,9 @@
 					consensusResult = null;
 				}
 
-				fetchWorkspaceDetails(activeWs);
+				if (activeWs && activeWs !== 'all' && activeWs !== 'auto-temp') {
+					fetchWorkspaceDetails(activeWs);
+				}
 				fetchStatus();
 				await fetchHistory(false);
 			} else {
@@ -360,17 +371,22 @@
 	async function runTerminalCommand(quickCmd: string) {
 		if (!quickCmd.trim()) return;
 		isRunningCmd = true;
-		terminalLogs = `$ ${quickCmd}\nRunning in ${activeWs}...\n`;
+		const targetWs = (activeWs === 'all' || activeWs === 'auto-temp' || !activeWs)
+			? (workspaces.find(w => !w.startsWith('temp-')) || 'demo-project')
+			: activeWs;
+		terminalLogs = `$ ${quickCmd}\nRunning in ${targetWs}...\n`;
 
 		try {
 			const res = await fetch('/api/terminal', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ workspace: activeWs, command: quickCmd })
+				body: JSON.stringify({ workspace: targetWs, command: quickCmd })
 			});
 			const d = await res.json();
-			terminalLogs = `$ ${quickCmd}\n\n` + (d.output || d.error || '(no output)');
-			fetchWorkspaceDetails(activeWs);
+			terminalLogs = `$ ${quickCmd} (in ${targetWs})\n\n` + (d.output || d.error || '(no output)');
+			if (activeWs && activeWs !== 'all' && activeWs !== 'auto-temp') {
+				fetchWorkspaceDetails(activeWs);
+			}
 		} catch (err: any) {
 			terminalLogs += `\nError: ${err.message}`;
 		} finally {
@@ -414,7 +430,8 @@
 			const d = await res.json();
 			if (d.success) {
 				if (activeWs === ws) {
-					activeWs = 'auto-temp';
+					activeWs = 'all';
+					wsDetails = null;
 				}
 				await fetchWorkspaces();
 			} else {
@@ -437,7 +454,8 @@
 			const d = await res.json();
 			if (d.success) {
 				if (activeWs.startsWith('temp-')) {
-					activeWs = 'auto-temp';
+					activeWs = 'all';
+					wsDetails = null;
 				}
 				await fetchWorkspaces();
 			} else {
@@ -451,7 +469,7 @@
 	onMount(() => {
 		if (data.workspaces && data.workspaces.length > 0) {
 			workspaces = data.workspaces;
-			if (!workspaces.includes(activeWs)) activeWs = data.workspaces[0];
+			// Keep activeWs = 'all' (Unselected / Auto-Temp) on page load & refresh!
 		}
 		if (data.history && data.history.length > 0) {
 			history = data.history;
@@ -473,7 +491,6 @@
 		fetchStatus();
 		fetchWorkspaces();
 		fetchModels();
-		if (activeWs && activeWs !== 'auto-temp') fetchWorkspaceDetails(activeWs);
 
 		const statusInterval = setInterval(() => {
 			fetchStatus();
@@ -501,16 +518,16 @@
 <div class="min-h-screen bg-zinc-950 text-zinc-100 antialiased font-sans flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200">
 	<!-- Top Navbar -->
 	<Header 
-		activeWs={activeWs === 'all' ? 'ทุกโปรเจกต์ (All)' : activeWs} 
+		activeWs={activeWs === 'all' || activeWs === 'auto-temp' ? '✨ Auto Temp (ไม่เลือกโปรเจกต์)' : `📁 ${activeWs}`} 
 		{status} 
 		{tokenStats} 
 		onOpenSettings={() => (showSettingsModal = true)}
 	/>
 
 	<!-- Main Workspace Grid -->
-	<div class="flex-1 max-w-7xl w-full mx-auto p-5 flex flex-col lg:flex-row gap-5">
+	<div class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-5 flex flex-col lg:flex-row gap-5">
 		<!-- Left Sidebar -->
-		<aside class="w-full lg:w-64 flex flex-col gap-4 shrink-0">
+		<aside class="w-full lg:w-72 flex flex-col gap-3.5 shrink-0">
 			<WorkspaceSidebar 
 				{workspaces} 
 				{activeWs} 
@@ -529,10 +546,11 @@
 				onSelectTask={selectHistoryTask} 
 				onRefresh={() => fetchHistory(false)} 
 				onClearWorkspaceFilter={() => selectWorkspace('all')}
+				onNewTask={clearSelectedTask}
 			/>
 
 			<QuickCommand 
-				activeWs={activeWs === 'all' ? (workspaces.find(w => !w.startsWith('temp-')) || 'demo-project') : activeWs} 
+				activeWs={activeWs === 'all' || activeWs === 'auto-temp' ? (workspaces.find(w => !w.startsWith('temp-')) || 'demo-project') : activeWs} 
 				onRunCommand={runTerminalCommand} 
 				isRunning={isRunningCmd} 
 			/>
@@ -544,11 +562,14 @@
 				bind:prompt 
 				bind:branch 
 				bind:provider 
+				{activeWs}
+				{workspaces}
 				{models}
 				{selectedTaskId} 
 				{isExecuting} 
 				onExecute={executeTask} 
-				onClearSelected={clearSelectedTask} 
+				onClearSelected={clearSelectedTask}
+				onSelectWorkspace={selectWorkspace}
 			/>
 
 			<ResultsViewer 
@@ -559,7 +580,10 @@
 				{wsDetails} 
 				{terminalLogs} 
 				{taskBadge} 
-				{taskBadgeType} 
+				{taskBadgeType}
+				recentHistory={history}
+				onApplyStarter={handleApplyStarter}
+				onSelectHistoryTask={selectHistoryTask}
 			/>
 		</main>
 	</div>
