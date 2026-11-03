@@ -28,18 +28,19 @@
 2. [🏗️ สถาปัตยกรรมระบบ (System Architecture)](#2-️-สถาปัตยกรรมระบบ-system-architecture)
 3. [📋 ความต้องการของระบบและเวอร์ชันที่ทดสอบ (Requirements)](#3--ความต้องการของระบบและเวอร์ชันที่ทดสอบ-requirements)
 4. [🚀 เริ่มต้นใช้งานด่วน (Quick Start)](#4--เริ่มต้นใช้งานด่วน-quick-start)
-5. [🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์ (Step-by-Step Installation)](#5-️-คู่มือการติดตั้งตั้งแต่ศูนย์-step-by-step-installation)
-6. [⚙️ การตั้งค่าระบบและสภาพแวดล้อม (Configuration & .env)](#6-️-การตั้งค่าระบบและสภาพแวดล้อม-configuration---env)
-7. [🔑 คู่มือการเปลี่ยน Token และจัดการบัญชี (Token Rotation Guide)](#7--คู่มือการเปลี่ยน-token-และจัดการบัญชี-token-rotation-guide)
-8. [💻 คู่มือคำสั่ง CLI Runner (ask_models.py)](#8--คู่มือคำสั่ง-cli-runner-ask_modelspy)
-9. [📡 สัญญาการทำงานของ API และ SSE Streaming (API Specification)](#9--สัญญาการทำงานของ-api-และ-sse-streaming-api-specification)
-10. [🤖 โหมดการทำงานและระบบ Consensus (Execution Modes & Consensus)](#10--โหมดการทำงานและระบบ-consensus-execution-modes--consensus)
-11. [⚡ การทำงานของ Redis 7 Job Queue & Lease Guard](#11--การทำงานของ-redis-7-job-queue--lease-guard)
-12. [🛡️ ระบบตรวจสอบหลักฐานอัตโนมัติ (Automated Evidence Test Gate)](#12-️-ระบบตรวจสอบหลักฐานอัตโนมัติ-automated-evidence-test-gate)
-13. [🔒 สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)](#13--สถาปัตยกรรมความปลอดภัย-security-architecture--hardening)
-14. [⚙️ การบริหารจัดการด้วย PM2 (PM2 Operations)](#14-️-การบริหารจัดการด้วย-pm2-pm2-operations)
-15. [❓ ตารางวิเคราะห์และแก้ปัญหา (Troubleshooting Matrix)](#15--ตารางวิเคราะห์และแก้ปัญหา-troubleshooting-matrix)
-16. [📝 บันทึกประวัติการพัฒนา (Changelog)](#16--บันทึกประวัติการพัฒนา-changelog)
+5. [💻 คู่มือการย้ายหรือตั้งค่า Client เครื่องใหม่ (New Client Machine Setup Guide)](#5--คู่มือการย้ายหรือตั้งค่า-client-เครื่องใหม่-new-client-machine-setup-guide)
+6. [🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์บน Proxmox (Server Installation Guide)](#6-️-คู่มือการติดตั้งตั้งแต่ศูนย์บน-proxmox-server-installation-guide)
+7. [⚙️ การตั้งค่าระบบและสภาพแวดล้อม (Configuration & .env)](#7-️-การตั้งค่าระบบและสภาพแวดล้อม-configuration---env)
+8. [🔑 คู่มือการเปลี่ยน Token และจัดการบัญชี (Token Rotation Guide)](#8--คู่มือการเปลี่ยน-token-และจัดการบัญชี-token-rotation-guide)
+9. [💻 คู่มือคำสั่ง CLI Runner (ask_models.py)](#9--คู่มือคำสั่ง-cli-runner-ask_modelspy)
+10. [📡 สัญญาการทำงานของ API และ SSE Streaming (API Specification)](#10--สัญญาการทำงานของ-api-และ-sse-streaming-api-specification)
+11. [🤖 โหมดการทำงานและระบบ Consensus (Execution Modes & Consensus)](#11--โหมดการทำงานและระบบ-consensus-execution-modes--consensus)
+12. [⚡ การทำงานของ Redis 7 Job Queue & Lease Guard](#12--การทำงานของ-redis-7-job-queue--lease-guard)
+13. [🛡️ ระบบตรวจสอบหลักฐานอัตโนมัติ (Automated Evidence Test Gate)](#13-️-ระบบตรวจสอบหลักฐานอัตโนมัติ-automated-evidence-test-gate)
+14. [🔒 สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)](#14--สถาปัตยกรรมความปลอดภัย-security-architecture--hardening)
+15. [⚙️ การบริหารจัดการด้วย PM2 (PM2 Operations)](#15-️-การบริหารจัดการด้วย-pm2-pm2-operations)
+16. [❓ ตารางวิเคราะห์และแก้ปัญหา (Troubleshooting Matrix)](#16--ตารางวิเคราะห์และแก้ปัญหา-troubleshooting-matrix)
+17. [📝 บันทึกประวัติการพัฒนา (Changelog)](#17--บันทึกประวัติการพัฒนา-changelog)
 
 ---
 
@@ -47,10 +48,10 @@
 
 | กลุ่มผู้ใช้งาน | วัตถุประสงค์ | หัวข้อที่แนะนำให้อ่าน |
 |---|---|---|
-| **ผู้ใช้งานทั่วไป / นักพัฒนา** | มีระบบติดตั้งอยู่แล้ว ต้องการส่ง Prompt หรือใช้งานผ่าน CLI / Dashboard | [Quick Start](#4--เริ่มต้นใช้งานด่วน-quick-start) → [CLI Runner](#8--คู่มือคำสั่ง-cli-runner-ask_modelspy) → [Troubleshooting](#15--ตารางวิเคราะห์และแก้ปัญหา-troubleshooting-matrix) |
-| **ผู้ดูแลระบบ / DevOps** | ติดตั้งระบบใหม่ตั้งแต่ศูนย์ ตั้งค่า Proxmox, Redis, PM2, และเครือข่าย | [Requirements](#3--ความต้องการของระบบและเวอร์ชันที่ทดสอบ-requirements) → [Installation](#5-️-คู่มือการติดตั้งตั้งแต่ศูนย์-step-by-step-installation) → [PM2 Operations](#14-️-การบริหารจัดการด้วย-pm2-pm2-operations) |
-| **ความปลอดภัย / Security** | ตรวจสอบมาตรการป้องกัน, Token Isolation, Path Traversal, และ Process Group | [Security Architecture](#13--สถาปัตยกรรมความปลอดภัย-security-architecture--hardening) → [Token Rotation](#7--คู่มือการเปลี่ยน-token-และจัดการบัญชี-token-rotation-guide) |
-| **สถาปัตยกรรมซอฟต์แวร์** | ศึกษาระบบ Multi-Agent Consensus, Redis Atomic Queue, และ Real-time SSE | [System Architecture](#2-️-สถาปัตยกรรมระบบ-system-architecture) → [Redis 7 Queue](#11--การทำงานของ-redis-7-job-queue--lease-guard) → [Consensus](#10--โหมดการทำงานและระบบ-consensus-execution-modes--consensus) |
+| **ผู้ใช้งานทั่วไป / นักพัฒนา** | มีระบบติดตั้งอยู่แล้ว ต้องการส่ง Prompt หรือใช้งานผ่าน CLI / Dashboard | [Quick Start](#4--เริ่มต้นใช้งานด่วน-quick-start) → [CLI Runner](#9--คู่มือคำสั่ง-cli-runner-ask_modelspy) → [Troubleshooting](#16--ตารางวิเคราะห์และแก้ปัญหา-troubleshooting-matrix) |
+| **ผู้ดูแลระบบ / DevOps** | ติดตั้งระบบใหม่ตั้งแต่ศูนย์ ตั้งค่า Proxmox, Redis, PM2, และเครือข่าย | [Requirements](#3--ความต้องการของระบบและเวอร์ชันที่ทดสอบ-requirements) → [Installation](#6-️-คู่มือการติดตั้งตั้งแต่ศูนย์บน-proxmox-server-installation-guide) → [PM2 Operations](#15-️-การบริหารจัดการด้วย-pm2-pm2-operations) |
+| **ความปลอดภัย / Security** | ตรวจสอบมาตรการป้องกัน, Token Isolation, Path Traversal, และ Process Group | [Security Architecture](#14--สถาปัตยกรรมความปลอดภัย-security-architecture--hardening) → [Token Rotation](#8--คู่มือการเปลี่ยน-token-และจัดการบัญชี-token-rotation-guide) |
+| **สถาปัตยกรรมซอฟต์แวร์** | ศึกษาระบบ Multi-Agent Consensus, Redis Atomic Queue, และ Real-time SSE | [System Architecture](#2-️-สถาปัตยกรรมระบบ-system-architecture) → [Redis 7 Queue](#12--การทำงานของ-redis-7-job-queue--lease-guard) → [Consensus](#11--โหมดการทำงานและระบบ-consensus-execution-modes--consensus) |
 
 ---
 
@@ -185,7 +186,85 @@ flowchart TB
 
 ---
 
-## 5. 🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์ (Step-by-Step Installation)
+## 5. 💻 คู่มือการย้ายหรือตั้งค่า Client เครื่องใหม่ (New Client Machine Setup Guide)
+
+เมื่อคุณต้องการย้ายไปทำงานบนคอมพิวเตอร์เครื่องใหม่ (เช่น โน้ตบุ๊กเครื่องใหม่, Mac, Linux หรือให้เพื่อนร่วมทีมในวงเน็ตเวิร์กเดียวกันใช้งาน) เครื่องใหม่นั้นต้องการเพียง **Python 3.8+** เท่านั้น โดยไม่ต้องติดตั้ง Node.js หรือ Redis ใดๆ ที่เครื่อง Client
+
+### สิ่งที่ Client เครื่องใหม่ต้องการ:
+1. ไฟล์ **CLI Runner (`ask_models.py`)** ติดตั้งอยู่ที่ `~/.gemini/config/ask_models.py`
+2. ไฟล์ **Antigravity Rule (`proxmox-codex-bridge.md`)** ติดตั้งอยู่ที่ `~/.gemini/config/rules/proxmox-codex-bridge.md` เพื่อให้ Antigravity ส่งงานเข้า Bridge แทนการจำลองบทบาทเอง
+3. สิทธิ์การเข้าถึง IP ของ Proxmox Container ผ่าน LAN หรือ VPN (Tailscale/WireGuard)
+
+---
+
+### วิธีที่ 1: ติดตั้งอัตโนมัติด้วยคำสั่งเดียว (One-Click Setup) [แนะนำที่สุด ⭐]
+
+โคลน Repository มายังเครื่อง Client ใหม่ แล้วรันสคริปต์ `setup_client.py`:
+
+#### บน Windows (PowerShell):
+```powershell
+git clone https://github.com/techasit5415/proxmox-codex-bridge.git
+python proxmox-codex-bridge\scripts\setup_client.py
+```
+
+#### บน macOS / Linux (Terminal):
+```bash
+git clone https://github.com/techasit5415/proxmox-codex-bridge.git
+python3 proxmox-codex-bridge/scripts/setup_client.py
+```
+
+สคริปต์จะทำการ:
+1. สร้างโฟลเดอร์ `~/.gemini/config/rules/` ให้อัตโนมัติ
+2. คัดลอก `ask_models.py` และ `proxmox-codex-bridge.md` เข้าสู่ตำแหน่งคอนฟิกของระบบ
+3. ทำการทดสอบเชื่อมต่อ (Ping Check) ไปยัง Bridge Server เพื่อยืนยันความพร้อมใช้งานทันที
+
+---
+
+### กรณีเปลี่ยน IP, ใช้ Domain หรือใช้งานนอกบ้านผ่าน VPN / Tailscale:
+
+หากเครื่องใหม่เชื่อมต่อผ่าน IP อื่น หรือใช้ Tailscale IP ให้ใส่ Flag `--url`:
+```powershell
+# ตัวอย่าง: ต่อผ่าน Tailscale IP หรือ IP ใหม่
+python proxmox-codex-bridge\scripts\setup_client.py --url http://100.115.92.12:3000
+
+# ตัวอย่าง: หาก Server บังคับใช้ API Key (Bearer Auth)
+python proxmox-codex-bridge\scripts\setup_client.py --url http://192.168.5.159:3000 --api-key your_secret_key
+```
+
+---
+
+### การตั้งค่า Environment Variables ถาวรบน Client (Optional):
+
+หากคุณไม่ต้องการพิมพ์ Flag URL ทุกครั้ง สามารถตั้งค่าไว้ใน Environment ของเครื่อง Client ได้:
+
+#### บน Windows (PowerShell):
+```powershell
+# ตั้งค่าถาวรสำหรับ User ปัจจุบัน
+[System.Environment]::SetEnvironmentVariable('PROXMOX_BRIDGE_URL', 'http://192.168.5.159:3000/api/task', 'User')
+[System.Environment]::SetEnvironmentVariable('BRIDGE_API_KEY', 'your_secret_key', 'User')
+```
+
+#### บน macOS / Linux (เพิ่มใน `~/.bashrc` หรือ `~/.zshrc`):
+```bash
+export PROXMOX_BRIDGE_URL="http://192.168.5.159:3000/api/task"
+export BRIDGE_API_KEY="your_secret_key"
+```
+
+---
+
+### วิธีที่ 2: ตั้งค่าด้วยตนเอง (Manual Copy):
+
+หากไม่ต้องการรันสคริปต์ สามารถคัดลอกไฟล์ด้วยตนเอง:
+1. คัดลอก `scripts/ask_models.py` ไปไว้ที่:
+   - Windows: `C:\Users\<username>\.gemini\config\ask_models.py`
+   - Mac/Linux: `~/.gemini/config/ask_models.py`
+2. คัดลอก `rules/proxmox-codex-bridge.md` ไปไว้ที่:
+   - Windows: `C:\Users\<username>\.gemini\config\rules\proxmox-codex-bridge.md`
+   - Mac/Linux: `~/.gemini/config/rules/proxmox-codex-bridge.md`
+
+---
+
+## 6. 🛠️ คู่มือการติดตั้งตั้งแต่ศูนย์บน Proxmox (Server Installation Guide)
 
 ### ขั้นตอนที่ 1: สร้าง Proxmox LXC Container
 1. ในหน้า Proxmox VE Web UI กด **Create CT**
@@ -266,7 +345,7 @@ codex login status  # ตรวจสอบสถานะว่าแสดง 
 
 ---
 
-## 6. ⚙️ การตั้งค่าระบบและสภาพแวดล้อม (Configuration & .env)
+## 7. ⚙️ การตั้งค่าระบบและสภาพแวดล้อม (Configuration & .env)
 
 ไฟล์ `.env` จริงจะเก็บไว้ที่ `/opt/agent-bridge/.env` (และถูกละเว้นโดย `.gitignore` 100%):
 
@@ -286,9 +365,9 @@ codex login status  # ตรวจสอบสถานะว่าแสดง 
 
 ---
 
-## 7. 🔑 คู่มือการเปลี่ยน Token และจัดการบัญชี (Token Rotation Guide)
+## 8. 🔑 คู่มือการเปลี่ยน Token และจัดการบัญชี (Token Rotation Guide)
 
-### 7.1 วิธีเปลี่ยน `KMITL_TOKEN` (DeepSeek R1 GPU Cluster)
+### 8.1 วิธีเปลี่ยน `KMITL_TOKEN` (DeepSeek R1 GPU Cluster)
 1. SSH เข้าไปยัง Proxmox Container:
    ```bash
    ssh root@192.168.5.159
@@ -303,7 +382,7 @@ codex login status  # ตรวจสอบสถานะว่าแสดง 
    pm2 restart proxmox-codex-bridge --update-env
    ```
 
-### 7.2 วิธีเปลี่ยนหรือตั้งค่า `BRIDGE_API_KEY` (API Authentication)
+### 8.2 วิธีเปลี่ยนหรือตั้งค่า `BRIDGE_API_KEY` (API Authentication)
 1. แก้ไขไฟล์ `/opt/agent-bridge/.env`:
    ```ini
    BRIDGE_API_KEY=รหัสผ่านลับใหม่ที่คุณต้องการ
@@ -317,7 +396,7 @@ codex login status  # ตรวจสอบสถานะว่าแสดง 
    $env:BRIDGE_API_KEY="รหัสผ่านลับใหม่ที่คุณต้องการ"
    ```
 
-### 7.3 วิธี Re-login / เปลี่ยนบัญชี OpenAI Codex (ChatGPT Plus)
+### 8.3 วิธี Re-login / เปลี่ยนบัญชี OpenAI Codex (ChatGPT Plus)
 ```bash
 ssh root@192.168.5.159
 codex logout
@@ -328,7 +407,7 @@ codex login status
 
 ---
 
-## 8. 💻 คู่มือคำสั่ง CLI Runner (ask_models.py)
+## 9. 💻 คู่มือคำสั่ง CLI Runner (ask_models.py)
 
 ไฟล์ `ask_models.py` รองรับการรับคำสั่งทั้งแบบข้อความตรงๆ หรือส่ง Path ของไฟล์ Text:
 
@@ -349,9 +428,9 @@ python scripts/ask_models.py [MODE] [--workspace NAME] [--sync] "<PROMPT หร�
 
 ---
 
-## 9. 📡 สัญญาการทำงานของ API และ SSE Streaming (API Specification)
+## 10. 📡 สัญญาการทำงานของ API และ SSE Streaming (API Specification)
 
-### 9.1 ส่งคำสั่งสร้างงาน (`POST /api/task`)
+### 10.1 ส่งคำสั่งสร้างงาน (`POST /api/task`)
 - **Headers:** `Content-Type: application/json` และ `Authorization: Bearer <BRIDGE_API_KEY>` (หากเปิด Auth)
 - **Request Body:**
   ```json
@@ -371,7 +450,7 @@ python scripts/ask_models.py [MODE] [--workspace NAME] [--sync] "<PROMPT หร�
   }
   ```
 
-### 9.2 สตรีมผลลัพธ์สดเรียลไทม์ (`GET /api/task/[id]/events`)
+### 10.2 สตรีมผลลัพธ์สดเรียลไทม์ (`GET /api/task/[id]/events`)
 - **Format:** Server-Sent Events (`text/event-stream`)
 - **Event Types:**
   - `status`: การเปลี่ยนสถานะของงาน (`queued` -> `running` -> `completed` / `failed`)
@@ -382,7 +461,7 @@ python scripts/ask_models.py [MODE] [--workspace NAME] [--sync] "<PROMPT หร�
 
 ---
 
-## 10. 🤖 โหมดการทำงานและระบบ Consensus (Execution Modes & Consensus)
+## 11. 🤖 โหมดการทำงานและระบบ Consensus (Execution Modes & Consensus)
 
 ```mermaid
 flowchart LR
@@ -406,9 +485,9 @@ flowchart LR
 
 ---
 
-## 11. ⚡ การทำงานของ Redis 7 Job Queue & Lease Guard
+## 12. ⚡ การทำงานของ Redis 7 Job Queue & Lease Guard
 
-### 11.1 คำสั่ง Atomic Queue Transition (`BLMOVE`)
+### 12.1 คำสั่ง Atomic Queue Transition (`BLMOVE`)
 ระบบใช้คำสั่งของ Redis 7 ในการส่งต่องานจากคิวรอไปสู่คิวกำลังประมวลผล:
 ```redis
 BLMOVE tasks:queue tasks:processing RIGHT LEFT 3
@@ -416,7 +495,7 @@ BLMOVE tasks:queue tasks:processing RIGHT LEFT 3
 - **ประโยชน์:** ปิดช่องว่างที่งานจะสูญหาย (Zero Crash Window) หาก Worker เกิดแครชระหว่างรับงาน งานจะไม่หลุดออกจากระบบ
 - **Crash Recovery (`recoverOrphanedTasks`):** เมื่อ Worker เริ่มทำงานใหม่ จะสแกน `tasks:processing` หากพบงานที่ไม่มี Lease ถือครองอยู่ จะปรับสถานะเป็น `failed` พร้อมระบุสาเหตุ เพื่อให้ระบบตรวจสอบย้อนหลังได้
 
-### 11.2 Workspace Lease Guard & Heartbeat Renewal
+### 12.2 Workspace Lease Guard & Heartbeat Renewal
 - เมื่อเริ่มรันงาน ระบบจะสร้าง Lease Lock ใน Redis: `workspace:lease:<workspace_name>` ด้วยค่า TTL 15 นาที
 - **Heartbeat Renewal:** ระหว่างที่งานยังประมวลผลอยู่ Worker จะส่งคำสั่ง Lua Script ต่ออายุ TTL อัตโนมัติทุกๆ 30 วินาที ป้องกัน Lease หมดอายุระหว่างรันงานที่ซับซ้อน
 - **Atomic Release:** เมื่อเสร็จสิ้น จะปลดล็อคด้วย Atomic Lua Script ที่เปรียบเทียบ Token ป้องกันการลบ Lock ของผู้อื่น
@@ -424,7 +503,7 @@ BLMOVE tasks:queue tasks:processing RIGHT LEFT 3
 
 ---
 
-## 12. 🛡️ ระบบตรวจสอบหลักฐานอัตโนมัติ (Automated Evidence Test Gate)
+## 13. 🛡️ ระบบตรวจสอบหลักฐานอัตโนมัติ (Automated Evidence Test Gate)
 
 ระบบจะตรวจสอบโค้ดที่โมเดลแก้ไขโดยอัตโนมัติก่อนส่งมอบงาน:
 
@@ -440,7 +519,7 @@ BLMOVE tasks:queue tasks:processing RIGHT LEFT 3
 
 ---
 
-## 13. 🔒 สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)
+## 14. 🔒 สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)
 
 ระบบได้รับการ Audit ซ้ำ 3 รอบโดย **ChatGPT (`gpt-6.1-sol`)** และได้รับการปรับปรุงความปลอดภัยระดับ Enterprise (P0 & P1 Hardening):
 
@@ -457,7 +536,7 @@ BLMOVE tasks:queue tasks:processing RIGHT LEFT 3
 
 ---
 
-## 14. ⚙️ การบริหารจัดการด้วย PM2 (PM2 Operations)
+## 15. ⚙️ การบริหารจัดการด้วย PM2 (PM2 Operations)
 
 ระบบ Backend และ Worker ควบคุมการทำงานผ่าน **PM2** ภายใต้ชื่อ `proxmox-codex-bridge`:
 
@@ -483,7 +562,7 @@ pm2 save
 
 ---
 
-## 15. ❓ ตารางวิเคราะห์และแก้ปัญหา (Troubleshooting Matrix)
+## 16. ❓ ตารางวิเคราะห์และแก้ปัญหา (Troubleshooting Matrix)
 
 | ปัญหาที่พบ | สาเหตุที่เป็นไปได้ | วิธีตรวจสอบอย่างปลอดภัย | วิธีแก้ไข |
 |---|---|---|---|
@@ -498,7 +577,7 @@ pm2 save
 
 ---
 
-## 16. 📝 บันทึกประวัติการพัฒนา (Changelog)
+## 17. 📝 บันทึกประวัติการพัฒนา (Changelog)
 
 ### v2.2.0 (Security & Architecture Hardening - Post Audit)
 - 🛡️ **P0 Hardening:** เพิ่ม Canonical Realpath Symlink Guard ป้องกัน Symlink Escape

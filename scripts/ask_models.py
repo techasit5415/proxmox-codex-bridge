@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 CLI Helper for Antigravity & Proxmox Codex Bridge
-Directly queries Proxmox LXC Container with Redis Job Queue & SSE Streaming
+Directly queries Proxmox LXC Container with Redis Job Queue & SSE Streaming.
+Portable across any client machine (Windows, macOS, Linux).
 """
 
 import sys
@@ -15,8 +16,13 @@ import urllib.error
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-PROXMOX_BRIDGE_URL = "http://192.168.5.159:3000/api/task"
+DEFAULT_BRIDGE_URL = os.environ.get("PROXMOX_BRIDGE_URL", "http://192.168.5.159:3000/api/task")
 API_KEY = os.environ.get("BRIDGE_API_KEY", "")
+
+def get_base_url(task_url: str) -> str:
+    if "/api" in task_url:
+        return task_url.split("/api")[0]
+    return task_url.rstrip("/")
 
 def get_headers(extra=None):
     h = {"Accept": "application/json"}
@@ -26,8 +32,8 @@ def get_headers(extra=None):
         h.update(extra)
     return h
 
-def stream_or_poll_task(task_id: str):
-    events_url = f"http://192.168.5.159:3000/api/task/{task_id}/events"
+def stream_or_poll_task(task_id: str, base_url: str):
+    events_url = f"{base_url}/api/task/{task_id}/events"
     try:
         req = urllib.request.Request(events_url, headers=get_headers({"Accept": "text/event-stream"}))
         with urllib.request.urlopen(req, timeout=900) as resp:
@@ -54,7 +60,7 @@ def stream_or_poll_task(task_id: str):
         pass
 
     # Polling fallback
-    status_url = f"http://192.168.5.159:3000/api/task/{task_id}"
+    status_url = f"{base_url}/api/task/{task_id}"
     last_stage = None
     for _ in range(300):
         try:
@@ -78,14 +84,15 @@ def stream_or_poll_task(task_id: str):
     
     raise TimeoutError(f"Task {task_id} timed out waiting for completion")
 
-def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode: bool = False):
+def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode: bool = False, task_url: str = DEFAULT_BRIDGE_URL):
     payload = {
         "provider": provider,
         "prompt": prompt,
         "workspace": workspace
     }
     
-    url = f"{PROXMOX_BRIDGE_URL}?sync=true" if sync_mode else PROXMOX_BRIDGE_URL
+    url = f"{task_url}?sync=true" if sync_mode else task_url
+    base_url = get_base_url(task_url)
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -98,14 +105,14 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode:
             if resp.status == 202 or (data.get("taskId") and data.get("status") == "queued"):
                 task_id = data["taskId"]
                 print(f"[Redis Job Queue] Task '{task_id}' enqueued. Streaming live updates...\n")
-                return stream_or_poll_task(task_id)
+                return stream_or_poll_task(task_id, base_url)
             return data
     except urllib.error.HTTPError as e:
         if e.code == 202:
             data = json.loads(e.read().decode("utf-8"))
             task_id = data["taskId"]
             print(f"[Redis Job Queue] Task '{task_id}' enqueued (HTTP 202). Streaming live updates...\n")
-            return stream_or_poll_task(task_id)
+            return stream_or_poll_task(task_id, base_url)
         elif e.code == 409:
             err_data = e.read().decode('utf-8', errors='ignore')
             print(f"[ERROR 409] Workspace Conflict: {err_data}", file=sys.stderr)
@@ -117,7 +124,7 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode:
             print(f"[ERROR] HTTP Error {e.code}: {e.read().decode('utf-8', errors='ignore')}", file=sys.stderr)
             sys.exit(1)
     except urllib.error.URLError as e:
-        print(f"[ERROR] Cannot connect to Proxmox Bridge at {PROXMOX_BRIDGE_URL}: {e}", file=sys.stderr)
+        print(f"[ERROR] Cannot connect to Proxmox Bridge at {task_url}: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"[ERROR] Task failed: {e}", file=sys.stderr)
@@ -133,6 +140,7 @@ def main():
     
     parser.add_argument("--workspace", default="temp", help="Target workspace or 'temp' for auto temp")
     parser.add_argument("--sync", action="store_true", help="Run synchronously without Redis queue")
+    parser.add_argument("--url", default=DEFAULT_BRIDGE_URL, help="Custom Proxmox Bridge Task URL (default: http://192.168.5.159:3000/api/task or PROXMOX_BRIDGE_URL)")
     parser.add_argument("prompt", help="The prompt / instruction to send (or path to text file)")
     
     args = parser.parse_args()
@@ -150,10 +158,11 @@ def main():
         with open(args.prompt, 'r', encoding='utf-8') as pf:
             prompt_text = pf.read()
             
-    res = query_bridge(provider, prompt_text, args.workspace, sync_mode=args.sync)
+    res = query_bridge(provider, prompt_text, args.workspace, sync_mode=args.sync, task_url=args.url)
+    base_url = get_base_url(args.url)
     
     print(f"\n[Proxmox Bridge Task Completed | Mode: {res.get('mode', provider)} | Workspace: {res.get('workspace')}]")
-    print(f"Recorded in Dashboard: http://192.168.5.159:3000\n")
+    print(f"Recorded in Dashboard: {base_url}\n")
     
     if provider == "consensus":
         consensus_data = res.get("consensus", {})
