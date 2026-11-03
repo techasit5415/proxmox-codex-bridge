@@ -42,17 +42,40 @@ export function resolveSafeWorkspace(workspaceName: string): string {
 	) {
 		throw new Error('Forbidden workspace path: directory traversal detected');
 	}
+
+	// Symlink containment check: if path exists on disk, ensure canonical realpath is within root
+	if (fs.existsSync(target)) {
+		try {
+			const realRoot = fs.realpathSync(root);
+			const realTarget = fs.realpathSync(target);
+			const realRel = path.relative(realRoot, realTarget);
+			if (
+				realRel === '' ||
+				realRel === '..' ||
+				realRel.startsWith(`..${path.sep}`) ||
+				realRel.startsWith('../') ||
+				path.isAbsolute(realRel)
+			) {
+				throw new Error('Forbidden workspace path: symlink escape detected');
+			}
+		} catch (err: any) {
+			if (err.message.includes('Forbidden workspace path')) throw err;
+			throw new Error(`Workspace path validation error: ${err.message}`);
+		}
+	}
+
 	return target;
 }
 
 /**
  * Generates a sanitized environment object for child processes (Codex CLI, tests, git).
- * Prevents leaking host secrets, BRIDGE_API_KEY, and API tokens to untrusted code.
+ * Prevents leaking host secrets, BRIDGE_API_KEY, SSH keys/agents, and API tokens to untrusted code.
  */
 export function getSanitizedEnv(): NodeJS.ProcessEnv {
+	// Strict allowlist: excludes SSH_AUTH_SOCK and CODEX_CONFIG_DIR
 	const allowedKeys = [
 		'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'SHELL', 'TMPDIR',
-		'NODE_PATH', 'PYTHONPATH', 'SSH_AUTH_SOCK', 'CODEX_CONFIG_DIR'
+		'NODE_PATH', 'PYTHONPATH'
 	];
 	const safeEnv: NodeJS.ProcessEnv = {
 		LANG: 'C.UTF-8',
@@ -66,9 +89,11 @@ export function getSanitizedEnv(): NodeJS.ProcessEnv {
 	return safeEnv;
 }
 
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB memory buffer limit
+
 /**
- * Safely executes Codex CLI via direct stdin pipe without writing prompt files to /tmp
- * and without invoking a shell (shell: false).
+ * Safely executes Codex CLI via direct stdin pipe without writing prompt files to /tmp,
+ * without invoking a shell (shell: false), with process-tree termination and output buffering cap.
  */
 export function execCodexWithStdin(
 	runDir: string,
@@ -82,25 +107,56 @@ export function execCodexWithStdin(
 			{
 				cwd: runDir,
 				env: getSanitizedEnv(),
-				shell: false
+				shell: false,
+				detached: process.platform !== 'win32'
 			}
 		);
 
 		let stdout = '';
 		let stderr = '';
 		let killed = false;
+		let stdoutTruncated = false;
+		let stderrTruncated = false;
+
+		function killProcessGroup(signal: NodeJS.Signals) {
+			if (!child.pid) return;
+			try {
+				if (process.platform !== 'win32') {
+					process.kill(-child.pid, signal);
+				} else {
+					child.kill(signal);
+				}
+			} catch (e) {
+				try { child.kill(signal); } catch (e2) {}
+			}
+		}
 
 		const timer = setTimeout(() => {
 			killed = true;
-			child.kill('SIGTERM');
+			killProcessGroup('SIGTERM');
 			setTimeout(() => {
-				if (!child.killed) child.kill('SIGKILL');
+				if (!child.killed) killProcessGroup('SIGKILL');
 			}, 3000);
 			reject(new Error(`Codex process timed out after ${Math.round(timeoutMs / 1000)}s`));
 		}, timeoutMs);
 
-		child.stdout?.on('data', (d) => { stdout += d.toString(); });
-		child.stderr?.on('data', (d) => { stderr += d.toString(); });
+		child.stdout?.on('data', (d) => {
+			if (stdout.length < MAX_OUTPUT_BYTES) {
+				stdout += d.toString();
+			} else if (!stdoutTruncated) {
+				stdoutTruncated = true;
+				stdout += '\n...[stdout truncated: exceeded 10MB limit]';
+			}
+		});
+
+		child.stderr?.on('data', (d) => {
+			if (stderr.length < MAX_OUTPUT_BYTES) {
+				stderr += d.toString();
+			} else if (!stderrTruncated) {
+				stderrTruncated = true;
+				stderr += '\n...[stderr truncated: exceeded 10MB limit]';
+			}
+		});
 
 		child.on('error', (err) => {
 			clearTimeout(timer);
@@ -114,6 +170,7 @@ export function execCodexWithStdin(
 		});
 
 		if (child.stdin) {
+			child.stdin.on('error', () => {}); // Handle EPIPE cleanly
 			child.stdin.write(prompt);
 			child.stdin.end();
 		}

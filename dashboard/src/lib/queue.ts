@@ -259,6 +259,41 @@ export async function getTask(taskId: string): Promise<TaskJobData | null> {
 	return null;
 }
 
+/**
+ * Scans tasks:processing for tasks left behind by an unexpected crash or container reboot.
+ * Reconciles their status to 'failed' and clears them from tasks:processing.
+ */
+export async function recoverOrphanedTasks() {
+	try {
+		const redis = getRedisClient();
+		const processingTasks = await redis.lrange('tasks:processing', 0, -1);
+		if (processingTasks && processingTasks.length > 0) {
+			console.log(`[Redis Job Queue] Found ${processingTasks.length} in-flight tasks from prior session. Cleaning up...`);
+			for (const taskId of processingTasks) {
+				const raw = await redis.hget(`task:${taskId}`, 'data');
+				if (raw) {
+					try {
+						const job: TaskJobData = JSON.parse(raw);
+						if (job.status === 'running' || job.status === 'queued') {
+							job.status = 'failed';
+							job.error = 'Task interrupted by bridge restart or container reboot';
+							job.completedAt = Date.now();
+							await redis.hset(`task:${taskId}`, {
+								status: 'failed',
+								data: JSON.stringify(job)
+							});
+						}
+					} catch (e) {}
+				}
+				await redis.lrem('tasks:processing', 1, taskId);
+			}
+			console.log('[Redis Job Queue] In-flight task recovery complete.');
+		}
+	} catch (e) {
+		console.warn('[Redis Recovery Warning]:', e);
+	}
+}
+
 // Redis Job Queue Background Worker
 export function startTaskWorker() {
 	if (isWorkerRunning) return;
@@ -266,18 +301,23 @@ export function startTaskWorker() {
 	console.log('[Redis Job Queue] Dedicated Worker started. Monitoring tasks:queue...');
 
 	(async () => {
+		// Reconcile and recover any tasks left in tasks:processing from prior session
+		await recoverOrphanedTasks();
+
 		const workerClient = getRedisWorkerClient();
 		const redis = getRedisClient();
 
 		while (isWorkerRunning) {
 			try {
-				// Block and wait on dedicated worker client with 3-second timeout
-				const res = await workerClient.brpop('tasks:queue', 3);
-				if (!res || !res[1]) continue;
+				// Atomic queue transition: brpoplpush safely moves taskId from queue to processing list
+				const taskId = await workerClient.brpoplpush('tasks:queue', 'tasks:processing', 3);
+				if (!taskId) continue;
 
-				const taskId = res[1];
 				const rawData = await redis.hget(`task:${taskId}`, 'data');
-				if (!rawData) continue;
+				if (!rawData) {
+					await redis.lrem('tasks:processing', 1, taskId);
+					continue;
+				}
 
 				const job: TaskJobData = JSON.parse(rawData);
 				console.log(`[Redis Job Queue] Worker picked up task ${taskId} (workspace: ${job.workspace}, provider: ${job.provider})`);
@@ -288,7 +328,6 @@ export function startTaskWorker() {
 					status: 'running',
 					data: JSON.stringify(job)
 				});
-				await redis.sadd('tasks:processing', taskId);
 				await publishTaskEvent(taskId, { type: 'status', status: 'running', message: 'Worker started processing' });
 
 				// Acquire Workspace Lease and start Heartbeat renewal
@@ -339,7 +378,7 @@ export function startTaskWorker() {
 					// Stop Heartbeat renewal and release Workspace Lease
 					stopLeaseHeartbeat(taskId);
 					await releaseWorkspaceLease(job.workspace, taskId);
-					await redis.srem('tasks:processing', taskId);
+					await redis.lrem('tasks:processing', 1, taskId);
 				}
 			} catch (err: any) {
 				// Prevent tight error loop if Redis disconnects

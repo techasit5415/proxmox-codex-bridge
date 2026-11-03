@@ -111,18 +111,18 @@ flowchart TD
 
 ## 🛡️ สถาปัตยกรรมความปลอดภัย (Security Architecture & Hardening)
 
-ระบบได้รับการ Audit เชิงลึกโดย **ChatGPT (OpenAI Codex: `gpt-6.1-sol`)** และได้รับการปรับปรุงมาตรการความปลอดภัยระดับ Production 6 ชั้น ดังนี้:
+ระบบได้รับการ Audit ซ้ำสองรอบโดย **ChatGPT (OpenAI Codex: `gpt-6.1-sol`)** และได้รับการปรับปรุงมาตรการความปลอดภัยและความเสถียรระดับ Production เต็มรูปแบบ ดังนี้:
 
-### 1. การจัดการ Secrets & API Tokens (Zero-Token in Git & Subprocess Isolation)
-* **ปัญหาเดิม:** การ Hardcode API Key หรือ Token ไว้ในซอร์สโค้ด เสี่ยงต่อการรั่วไหลเมื่อ Push ขึ้น Public GitHub Repository และคำสั่ง `spawn`/`exec` มักสืบทอด `process.env` ไปยังสคริปต์ภายนอก
+### 1. การจัดการ Secrets & SSH Agent Isolation (`getSanitizedEnv`)
+* **ปัญหาเดิม:** การ Hardcode API Key หรือ Token ไว้ในซอร์สโค้ด เสี่ยงต่อการรั่วไหล และคำสั่ง `spawn`/`exec` มักสืบทอด `process.env` (รวมถึง `SSH_AUTH_SOCK` ที่ให้สิทธิ์ใช้ SSH Agent ของ Host)
 * **แนวทางแก้ไข:**
   1. ไฟล์โค้ดทั้งหมดอ่านค่าผ่าน `process.env` โดยไม่มีการ Hardcode Key ใดๆ
   2. ไฟล์ `.gitignore` บังคับห้ามติดตาม `.env` และ `.env.*` ทุกชนิด
   3. บนเซิร์ฟเวอร์ Proxmox จะสร้างไฟล์ `/opt/agent-bridge/.env` กำหนดสิทธิ์เข้มงวด `chmod 600 /opt/agent-bridge/.env`
-  4. **Subprocess Environment Sanitization (`getSanitizedEnv`):** ระบบจะกรองและส่งเฉพาะตัวแปรระบบที่จำเป็น (`PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TERM`, `SHELL`, `TMPDIR`, `SSH_AUTH_SOCK`) ให้กับ Child Process (Codex CLI, `npm test`, `pytest`, `git`) โดย **ตัด `BRIDGE_API_KEY`, `KMITL_TOKEN` และ Secret อื่นๆ ออกทั้งหมด** เพื่อป้องกันไม่ให้โค้ดที่ไม่น่าไว้วางใจใน Workspace สามารถ dump หรือขโมย Token ออกไปได้
+  4. **Subprocess Environment Sanitization (`getSanitizedEnv`):** ระบบจะส่งเฉพาะตัวแปรระบบ allowlist ที่จำเป็น (`PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TERM`, `SHELL`, `TMPDIR`, `NODE_PATH`, `PYTHONPATH`) ให้กับ Child Process (Codex CLI, `npm test`, `pytest`, `git`) โดย **ตัด `BRIDGE_API_KEY`, `KMITL_TOKEN`, และ `SSH_AUTH_SOCK` ออกทั้งหมด** สกัดกั้นไม่ให้โค้ดที่ไม่น่าไว้วางใจใน Workspace สามารถขโมย Token หรือใช้ SSH Agent ของเครื่องโฮสต์ได้
 
-### 2. การป้องกัน Path Traversal & Directory Sibling Escapes (`resolveSafeWorkspace`)
-* **ปัญหาเดิม:** การตรวจสอบด้วย `target.startsWith(WORKSPACES_DIR)` แบบ String Prefix ธรรมดา มีช่องโหว่ **Directory Sibling** (เช่น `/opt/agent-bridge/workspaces-backup` ยังคงขึ้นต้นด้วย `/opt/agent-bridge/workspaces`) และอาจยอมรับ `.` (root directory)
+### 2. การป้องกัน Path Traversal & Symlink Escape (`resolveSafeWorkspace`)
+* **ปัญหาเดิม:** การตรวจสอบเฉพาะข้อความ `path.relative` ป้องกัน Traversal แบบ `../` ได้ แต่ไม่สามารถป้องกัน **Symlink Escape** (เช่น การสร้าง Symbolic Link ชี้ออกไปหา `/etc`)
 * **แนวทางแก้ไข:**
   ใน `taskRunner.ts` และ API Routes ทุกตัว ใช้ฟังก์ชัน `resolveSafeWorkspace`:
   ```typescript
@@ -141,29 +141,39 @@ flowchart TD
     if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || rel.startsWith('../') || path.isAbsolute(rel)) {
       throw new Error('Forbidden workspace path: directory traversal detected');
     }
+
+    // Canonical Filesystem Symlink Containment Check
+    if (fs.existsSync(target)) {
+      const realRoot = fs.realpathSync(root);
+      const realTarget = fs.realpathSync(target);
+      const realRel = path.relative(realRoot, realTarget);
+      if (realRel === '' || realRel === '..' || realRel.startsWith(`..${path.sep}`) || realRel.startsWith('../') || path.isAbsolute(realRel)) {
+        throw new Error('Forbidden workspace path: symlink escape detected');
+      }
+    }
     return target;
   }
   ```
-  ตัดสิทธิ์และส่งกลับ **HTTP 400/403** ทันทีหากตรวจพบความพยายามหลบหนีออกจากไดเรกทอรี
 
-### 3. การรันคำสั่ง Codex แบบ Direct Stdin Pipe โดยไม่ผ่าน Shell (`execCodexWithStdin`)
-* ไม่มีการเขียน Prompt ลงในไฟล์ชั่วคราวบน `/tmp` ที่อาจถูกกระบวนการอื่นแอบอ่าน
-* ไม่มีการเรียกผ่าน Shell (`shell: false`) และใช้ `spawn('codex', ['exec', '--dangerously-bypass-approvals-and-sandbox', '-C', runDir, '-'])`
-* ส่งเนื้อหา Prompt เข้าสู่ `child.stdin.write(prompt)` โดยตรง 100% จึงตัดปัญหา Shell Metacharacter Injection (เช่น `;`, `&&`, `|`, `` ` ``) สิ้นเชิง
+### 3. การรันคำสั่งแบบ Stdin Pipe, Process Tree Kill และ Anti-OOM Buffering (`execCodexWithStdin`)
+* ไม่มีการเขียน Prompt ลงไฟล์ชั่วคราวบน `/tmp`
+* ใช้ `spawn('codex', [...], { shell: false, detached: true })` และส่ง Prompt ผ่าน `child.stdin.write(prompt)` 100%
+* **Process Tree Kill:** เมื่อเกิด Timeout หรือ Error ระบบจะส่งสัญญาณ `SIGTERM`/`SIGKILL` ไปยัง **Process Group (`process.kill(-child.pid)`)** กวาดล้างทั้งโปรเซสแม่และลูกหลาน (Grandchildren) ทั้งหมด ขจัดปัญหา Zombie Process
+* **Anti-OOM Buffer Protection:** จำกัดการสะสม Logs ไว้ที่สูงสุด 10MB (`MAX_OUTPUT_BYTES`) ป้องกันไม่ให้แอปพลิเคชันเกิด Out-of-Memory หากงานสร้าง Output ปริมาณมหาศาล
 
-### 4. การจัดการคิวและต่ออายุ Lease Lock อัตโนมัติ (Heartbeat Lease Renewal)
-* เมื่อ Worker รับงาน จะสร้าง Lease Lock ใน Redis และเริ่มระบบ **Heartbeat Renewal** ทุก 30 วินาที เพื่อขยาย TTL ไปเรื่อยๆ ตราบใดที่โปรเซสยังทำงานอยู่ ป้องกันปัญหา Task ทำงานนานจน Lease หมดอายุ
-* เมื่อทำงานเสร็จหรือเกิด Error จะปลด Lock ด้วย **Atomic Lua Script** (เปรียบเทียบ Token ป้องกันการลบ Lease ของผู้อื่น)
-* แยกการเชื่อมต่อ Redis ของ Worker (`getRedisWorkerClient`) ออกจาก Web API Client เพื่อป้องกันไม่ให้คำสั่งบล็อค `BRPOP` กีดกันคำสั่งอื่น
+### 4. การจัดการคิวแบบ Atomic Transition (`brpoplpush`) และ Lease Heartbeat
+* **Atomic Queue-to-Processing:** ใช้คำสั่ง `brpoplpush` สลับสถานะงานจาก `tasks:queue` เข้าสู่ `tasks:processing` แบบ Atomic 100% ขจัดช่องว่างที่งานจะสูญหายหาก Worker แครช
+* **Orphan Task Auto-Recovery (`recoverOrphanedTasks`):** เมื่อ Worker เริ่มทำงานใหม่ จะสแกน `tasks:processing` เพื่อปรับสถานะงานที่ค้างให้เป็น `failed` พร้อมบันทึกสาเหตุ
+* **Heartbeat Lease Renewal:** Worker ต่ออายุ TTL ทุกๆ 30 วินาทีอัตโนมัติตราบใดที่ Task ยังรันอยู่ และปลดล็อคด้วย **Atomic Lua Script** เมื่อเสร็จสิ้น
 
-### 5. การป้องกัน API ด้วย Bearer Token (`BRIDGE_API_KEY`)
+### 5. มาตรฐาน Authentication แบบ OWASP (Bearer Header Only)
 * ใน `hooks.server.ts` หากกำหนด `BRIDGE_API_KEY` ในไฟล์ `.env`:
-  * ทุก Request ที่เรียกมายัง `/api/*` จะต้องส่ง Header `Authorization: Bearer <token>` หรือ Query Parameter `?key=<token>`
-  * หากไม่ส่งหรือส่งไม่ถูกต้อง จะถูกปฏิเสธด้วยรหัส **HTTP 401 Unauthorized**
-  * หากยังไม่ได้กำหนด Key ระบบจะแสดงข้อความเตือนด้านความปลอดภัยบน Console ชัดเจน
+  * บังคับส่งผ่าน **Header `Authorization: Bearer <token>` เท่านั้น**
+  * **ยกเลิกการรับ Key ผ่าน URL Query String (`?key=`)** ตามมาตรฐาน OWASP เพื่อป้องกันไม่ให้ความลับหลุดเข้าไปใน Access Logs หรือประวัติ Browser
+  * หากไม่ส่งหรือส่งไม่ถูกต้อง จะตอบ **HTTP 401 Unauthorized** ทันที
 
 ### 6. คำแนะนำด้าน Sandbox & Proxmox VE
-* **Unprivileged Container:** สร้าง LXC Container ในโหมด **Unprivileged Container (`unprivileged: 1`)** เสมอ เพื่อให้สิทธิ์ `root` ใน Container เทียบเท่ากับ Non-root user บน Proxmox Host ขจัดความเสี่ยงต่อการเกิด Container Breakout
+* **Unprivileged Container:** สร้าง LXC Container ในโหมด **Unprivileged Container (`unprivileged: 1`)** เสมอ เพื่อให้สิทธิ์ `root` ใน Container เทียบเท่ากับ Non-root user บน Proxmox Host
 * **Resource Monitoring:** PM2 มี `max_memory_restart: '600M'` ป้องกัน Memory Leak ค้างในระบบ
 
 ---

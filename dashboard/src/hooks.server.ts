@@ -15,16 +15,15 @@ if (BRIDGE_API_KEY) {
 export const handle: Handle = async ({ event, resolve }) => {
 	const pathname = event.url.pathname;
 
-	// Enforce API Key authentication if BRIDGE_API_KEY is set
+	// Enforce API Key authentication if BRIDGE_API_KEY is set (Bearer Token in Header only, OWASP-compliant)
 	if (BRIDGE_API_KEY && pathname.startsWith('/api')) {
 		const authHeader = event.request.headers.get('authorization') || '';
 		const tokenFromBearer = authHeader.startsWith('Bearer ') ? authHeader.substring(7).trim() : '';
-		const tokenFromQuery = event.url.searchParams.get('key')?.trim() || '';
 
-		if (tokenFromBearer !== BRIDGE_API_KEY && tokenFromQuery !== BRIDGE_API_KEY) {
+		if (tokenFromBearer !== BRIDGE_API_KEY) {
 			return new Response(
 				JSON.stringify({
-					error: 'Unauthorized: Missing or invalid API key. Provide Authorization: Bearer <token> or ?key=<token>'
+					error: 'Unauthorized: Missing or invalid API key. Provide Authorization: Bearer <token> in request headers.'
 				}),
 				{
 					status: 401,
