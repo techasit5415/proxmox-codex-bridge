@@ -1293,6 +1293,7 @@ export async function executeTaskPipeline(
 		result.testEvidence = testEvidence;
 
 		saveTaskToHistory({
+			id: job.id,
 			workspace: activeWorkspace,
 			prompt,
 			provider: result.provider,
@@ -1304,7 +1305,7 @@ export async function executeTaskPipeline(
 			mode: 'single',
 			testEvidence
 		});
-		return { success: true, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
+		return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
 	}
 
 	// Dual Mode (Worktrees)
@@ -1358,6 +1359,7 @@ export async function executeTaskPipeline(
 		};
 
 		saveTaskToHistory({
+			id: job.id,
 			workspace: activeWorkspace,
 			prompt,
 			provider: 'Dual Agents (Codex + DeepSeek)',
@@ -1374,6 +1376,7 @@ export async function executeTaskPipeline(
 
 		return {
 			success: true,
+			id: job.id,
 			workspace: activeWorkspace,
 			mode: 'both',
 			codex: codexRes,
@@ -1568,6 +1571,7 @@ ${mandateRules}`;
 		const netTokens = Math.max(0, totalTokens - cachedTokens);
 
 		saveTaskToHistory({
+			id: job.id,
 			workspace: activeWorkspace,
 			prompt,
 			provider: 'Multi-Agent Consensus (Codex + DeepSeek)',
@@ -1589,6 +1593,7 @@ ${mandateRules}`;
 
 		return {
 			success: true,
+			id: job.id,
 			workspace: activeWorkspace,
 			mode: 'consensus',
 			consensus: consensusData,
@@ -1620,6 +1625,7 @@ ${mandateRules}`;
 		result.testEvidence = testEvidence;
 
 		saveTaskToHistory({
+			id: job.id,
 			workspace: activeWorkspace,
 			prompt,
 			provider: result.provider,
@@ -1631,7 +1637,7 @@ ${mandateRules}`;
 			mode: 'single',
 			testEvidence
 		});
-		return { success: true, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
+		return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
 	}
 
 	// Default: Codex Only
@@ -1644,6 +1650,7 @@ ${mandateRules}`;
 	result.testEvidence = testEvidence;
 
 	saveTaskToHistory({
+		id: job.id,
 		workspace: activeWorkspace,
 		prompt,
 		provider: result.provider,
@@ -1656,5 +1663,5 @@ ${mandateRules}`;
 		testEvidence
 	});
 
-	return { success: true, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
+	return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
 }
