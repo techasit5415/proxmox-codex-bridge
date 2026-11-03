@@ -38,9 +38,16 @@
 		</div>
 
 		{#if tokenStats}
-			<div class="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
-				<span class="text-zinc-500">Tokens:</span>
-				<strong class="text-zinc-100">{fmtTokens(tokenStats.totalTokens)}</strong>
+			{@const netTok = tokenStats.netTokens ?? Math.max(0, (tokenStats.totalTokens || 0) - (tokenStats.cachedTokens || 0))}
+			<div 
+				class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300"
+				title="Net Tokens (ใช้จริงไม่รวม Cache): {fmtTokens(netTok)} | Total (รวม Cache): {fmtTokens(tokenStats.totalTokens)} | Cached: {fmtTokens(tokenStats.cachedTokens)}"
+			>
+				<span class="text-zinc-500">Net Tok:</span>
+				<strong class="text-emerald-400">{fmtTokens(netTok)}</strong>
+				{#if tokenStats.cachedTokens > 0}
+					<span class="text-[10px] text-zinc-500">({fmtTokens(tokenStats.totalTokens)} tot)</span>
+				{/if}
 			</div>
 		{/if}
 

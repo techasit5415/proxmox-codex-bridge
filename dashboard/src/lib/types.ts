@@ -3,10 +3,12 @@ export interface TokenUsage {
 	input_tokens: number;
 	cached_input_tokens: number;
 	output_tokens: number;
+	net_tokens?: number;
 }
 
 export interface TokenStats {
 	totalTokens: number;
+	netTokens?: number;
 	inputTokens: number;
 	cachedTokens: number;
 	outputTokens: number;
@@ -108,6 +110,25 @@ export function fmtTokens(n: number | undefined | null): string {
 	return n.toLocaleString();
 }
 
+export function getNetTokens(t?: TokenUsage | null): number {
+	if (!t) return 0;
+	if (typeof t.net_tokens === 'number' && t.net_tokens > 0) return t.net_tokens;
+	const total = t.total_tokens || 0;
+	const cached = t.cached_input_tokens || 0;
+	return Math.max(0, total - cached);
+}
+
+export function fmtTokenBadge(t?: TokenUsage | null): string {
+	if (!t || !t.total_tokens) return '0 tok';
+	const net = getNetTokens(t);
+	const cached = t.cached_input_tokens || 0;
+	if (cached > 0) {
+		const pct = Math.round((cached / t.total_tokens) * 100);
+		return `${net.toLocaleString()} net (${t.total_tokens.toLocaleString()} tot · ${pct}% cached)`;
+	}
+	return `${net.toLocaleString()} tok`;
+}
+
 export function slugifyPrompt(prompt: string): string {
 	const clean = (prompt || '')
 		.trim()
@@ -123,35 +144,54 @@ export function detectTaskType(prompt: string): 'code' | 'general' {
 	if (!prompt) return 'general';
 	const lower = prompt.toLowerCase();
 
+	// Explicit code-editing / file-creation imperatives
+	const codeEditKeywords = [
+		'แก้โค้ด', 'แก้บั๊ก', 'สร้างไฟล์', 'ลบไฟล์', 'แก้ไขไฟล์', 'เขียนโค้ด',
+		'เพิ่มฟังก์ชัน', 'เขียนโปรแกรม', 'สร้างคอมโพเนนต์', 'รันสคริปต์',
+		'fix bug', 'refactor', 'implement', 'write code', 'create file', 'modify file'
+	];
+
+	// Analysis / explanation / consultation keywords
+	const analysisKeywords = [
+		'อธิบาย', 'วิเคราะห์', 'สรุป', 'ภาพรวม', 'ภาพใหญ่', 'ข้อดี', 'ข้อเสีย',
+		'การทำงานของ', 'ทำงานยังไง', 'คืออะไร', 'ทำไม', 'อย่างไร', 'เปรียบเทียบ',
+		'ความเห็น', 'แนะนำ', 'ประเมิน', 'เที่ยว', 'แพลน', 'วางแผน',
+		'explain', 'analyze', 'summarize', 'overview', 'architecture', 'pros and cons',
+		'how does', 'what is', 'why', 'compare', 'review', 'opinion', 'recommend'
+	];
+
+	let hasEditIntent = false;
+	for (const kw of codeEditKeywords) {
+		if (lower.includes(kw)) {
+			hasEditIntent = true;
+			break;
+		}
+	}
+
+	let analysisScore = 0;
+	for (const kw of analysisKeywords) {
+		if (lower.includes(kw)) analysisScore++;
+	}
+
+	// If user asks to explain/analyze/summarize without asking to write/edit code files, treat as 'general' (analysis)
+	if (analysisScore > 0 && !hasEditIntent) {
+		return 'general';
+	}
+
 	const codeKeywords = [
 		'code', 'function', 'class', 'bug', 'fix', 'refactor', 'test',
 		'component', 'api', 'endpoint', 'npm', 'pip', 'python', 'javascript',
 		'typescript', 'svelte', 'react', 'css', 'html', 'git', 'repo',
-		'docker', 'database', 'sql', 'script', 'compile', 'build', 'import',
-		'เขียนโค้ด', 'แก้โค้ด', 'แก้บั๊ก', 'สร้างไฟล์', 'ลบไฟล์', 'คอมไพล์',
-		'เพิ่มฟังก์ชัน', 'เขียนโปรแกรม', 'สร้างคอมโพเนนต์', 'รันสคริปต์'
+		'docker', 'database', 'sql', 'script', 'compile', 'build', 'import'
 	];
 
-	const generalKeywords = [
-		'เที่ยว', 'แพลน', 'เดินทาง', 'อาหาร', 'กิน', 'งบ', 'ประเมินงบ',
-		'แนะนำ', 'คิดว่า', 'ความเห็น', 'ทำไม', 'อย่างไร', 'คืออะไร',
-		'แปล', 'บทความ', 'แต่ง', 'เล่า', 'ประวัติ', 'วางแผน', 'เปรียบเทียบ',
-		'travel', 'trip', 'budget', 'plan', 'why', 'what is', 'explain',
-		'recommend', 'compare', 'opinion', 'summarize'
-	];
-
-	let codeScore = 0;
-	let generalScore = 0;
-
+	let codeScore = hasEditIntent ? 3 : 0;
 	for (const kw of codeKeywords) {
 		if (lower.includes(kw)) codeScore++;
 	}
-	for (const kw of generalKeywords) {
-		if (lower.includes(kw)) generalScore++;
-	}
 
-	if (generalScore > 0 && codeScore === 0) return 'general';
-	if (codeScore > generalScore) return 'code';
+	if (analysisScore > codeScore) return 'general';
+	if (codeScore > analysisScore) return 'code';
 
 	if (/[{}<>;`$]/.test(prompt) || /\b(src|app|lib|test|index|package)\b/i.test(prompt)) {
 		return 'code';

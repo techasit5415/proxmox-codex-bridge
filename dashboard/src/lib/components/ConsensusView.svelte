@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Sparkles, Layers, MessageSquareCode, CheckCircle2, Bot, Brain } from 'lucide-svelte';
 	import type { ConsensusData } from '../types';
-	import { fmtTokens, extractThoughtAndBody } from '../types';
+	import { fmtTokenBadge, extractThoughtAndBody } from '../types';
 	import ChainOfThought from './ChainOfThought.svelte';
 	import DiffViewer from './DiffViewer.svelte';
 
@@ -74,7 +74,7 @@
 			</div>
 			<div class="flex items-center gap-3 text-[11px] text-zinc-400">
 				<span>Status: <strong class="text-emerald-400">{consensus.finalSolution?.status || 'Clean'}</strong></span>
-				<span>Tokens: {fmtTokens(consensus.finalSolution?.tokens?.total_tokens)}</span>
+				<span class="text-emerald-300">{fmtTokenBadge(consensus.finalSolution?.tokens)}</span>
 			</div>
 		</div>
 
@@ -145,7 +145,7 @@
 					<span class="font-bold text-zinc-100 text-xs">Codex Proposal</span>
 					<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">{consensus.codexProposal?.branch}</span>
 				</div>
-				<span class="text-[11px] text-zinc-400">{fmtTokens(consensus.codexProposal?.tokens?.total_tokens)} tok</span>
+				<span class="text-[11px] text-emerald-400">{fmtTokenBadge(consensus.codexProposal?.tokens)}</span>
 			</div>
 
 			<div class="rounded-b-lg border-x border-b border-zinc-800 bg-zinc-900/40 p-3 flex flex-col gap-2 max-h-96 overflow-y-auto">
@@ -165,7 +165,7 @@
 					<span class="font-bold text-violet-200 text-xs">DeepSeek Proposal</span>
 					<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300">{consensus.deepseekProposal?.branch}</span>
 				</div>
-				<span class="text-[11px] text-violet-300">{fmtTokens(consensus.deepseekProposal?.tokens?.total_tokens)} tok</span>
+				<span class="text-[11px] text-violet-300">{fmtTokenBadge(consensus.deepseekProposal?.tokens)}</span>
 			</div>
 
 			{#if deepseekPropParsed.thoughts}

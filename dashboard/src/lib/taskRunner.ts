@@ -216,6 +216,11 @@ export function getLatestTokenUsage() {
 				else if (payload?.token_usage) lastUsage = payload.token_usage;
 			} catch (e) {}
 		}
+		if (lastUsage) {
+			const total = lastUsage.total_tokens || 0;
+			const cached = lastUsage.cached_input_tokens || 0;
+			lastUsage.net_tokens = Math.max(0, total - cached);
+		}
 		return lastUsage;
 	} catch (e) {
 		return null;
@@ -424,77 +429,366 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 	}
 }
 
-export async function runCodexTask(target: string, prompt: string, branchName: string, cwdOverride?: string): Promise<TaskResult> {
-	const runDir = cwdOverride || target;
-	if (!cwdOverride) {
-		try {
-			await execAsync(`git checkout -b ${branchName}`, { cwd: target });
-		} catch (e) {}
+/**
+ * SSRF Guard: validates that a URL is a public http/https URL and does not target
+ * loopback, RFC1918 private networks, link-local, or internal metadata endpoints.
+ */
+export function isSafePublicUrl(urlStr: string): boolean {
+	try {
+		const u = new URL(urlStr);
+		if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+		const host = u.hostname.toLowerCase();
+		if (
+			host === 'localhost' ||
+			host === '127.0.0.1' ||
+			host === '0.0.0.0' ||
+			host === '::1' ||
+			host.endsWith('.local') ||
+			host.startsWith('10.') ||
+			host.startsWith('192.168.') ||
+			host.startsWith('169.254.') ||
+			/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+		) {
+			return false;
+		}
+		return true;
+	} catch {
+		return false;
 	}
+}
 
-	const taskType = detectTaskType(prompt);
-	const effectivePrompt = taskType === 'general'
-		? `[TASK TYPE: GENERAL CONSULTATION / ADVISORY / PLANNING]
-Note: This is a general query, planning, or advisory question (NOT a file-editing code task).
-Please respond directly, thoroughly, and comprehensively to the user's question in the requested language (e.g. Thai).
-Do NOT attempt to search workspace files with rg/find or edit files unless explicitly instructed.
-
-User Question:
-${prompt}`
-		: prompt;
-
-	let stdout = '';
-	let stderr = '';
-	const res = await execCodexWithStdin(runDir, effectivePrompt, 15 * 60 * 1000);
-	stdout = res.stdout;
-	stderr = res.stderr;
-	const { stdout: diff } = await execAsync('git diff', { cwd: runDir });
-	const { stdout: status } = await execAsync('git status -s', { cwd: runDir });
-	const tokens = getLatestTokenUsage();
-
+/**
+ * Extracts a GitHub repository URL from prompt text if present.
+ */
+export function extractGitHubRepoUrl(prompt: string): { cloneUrl: string; repoFullName: string } | null {
+	if (!prompt) return null;
+	const match = prompt.match(/https?:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git|\/|\s|$|[)>\]"',;])/i);
+	if (!match) return null;
+	const owner = match[1];
+	const repo = match[2].replace(/\.git$/i, '');
+	if (!owner || !repo) return null;
 	return {
-		provider: 'Codex (gpt-6.1-sol)',
-		branch: branchName,
-		status: status.trim() || 'Clean',
-		diff: diff.trim() || '(No tracked files modified)',
-		logs: (stdout + '\n' + stderr).trim(),
-		tokens: tokens || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+		cloneUrl: `https://github.com/${owner}/${repo}.git`,
+		repoFullName: `${owner}/${repo}`
 	};
 }
 
-export async function runDeepSeekTask(target: string, prompt: string, branchName: string, cwdOverride?: string): Promise<TaskResult> {
-	const runDir = cwdOverride || target;
-	if (!cwdOverride) {
-		try {
-			await execAsync(`git checkout -b ${branchName}`, { cwd: target });
-		} catch (e) {}
+/**
+ * Checks whether a workspace directory is just an empty or auto-generated scratch workspace.
+ */
+export function isScratchWorkspace(dir: string): boolean {
+	if (!fs.existsSync(dir)) return true;
+	try {
+		const entries = fs.readdirSync(dir).filter(e => e !== '.git' && e !== '.worktrees');
+		if (entries.length === 0) return true;
+		if (entries.length === 1 && entries[0] === 'README.md') {
+			const content = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+			if (content.includes('Automated scratch workspace created for prompt')) {
+				return true;
+			}
+		}
+		return false;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Automatically clones a GitHub repository referenced in the prompt into the workspace
+ * if the workspace is currently an empty/auto-temp scratch workspace.
+ * This allows both DeepSeek R1 and OpenAI Codex to inspect the exact same repository files locally.
+ */
+export async function autoCloneGitHubRepoIfNeeded(
+	target: string,
+	prompt: string,
+	onEvent?: (event: Record<string, any>) => Promise<void>
+): Promise<{ cloned: boolean; repoFullName?: string; cloneUrl?: string }> {
+	const gh = extractGitHubRepoUrl(prompt);
+	if (!gh) return { cloned: false };
+	if (!isScratchWorkspace(target)) {
+		return { cloned: true, repoFullName: gh.repoFullName, cloneUrl: gh.cloneUrl };
 	}
 
-	const taskType = detectTaskType(prompt);
-	let fileList = '';
+	if (onEvent) {
+		await onEvent({ type: 'stage', stage: `🌐 Auto-Fetching GitHub Repo (${gh.repoFullName})...` });
+	}
+
+	const tmpClone = `/tmp/bridge-autoclone-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 	try {
-		const { stdout } = await execAsync('git ls-files | head -n 40', { cwd: runDir });
-		fileList = stdout;
-	} catch (e) {}
-	
-	const systemPrompt = taskType === 'general'
-		? `You are an expert AI advisor and assistant. The user is asking a general planning, advisory, or analytical question.
-Provide a clear, detailed, well-structured, and comprehensive response in the requested language (e.g. Thai).
-Do NOT format your response as code files or file: blocks unless specifically requested.`
-		: `You are an expert software engineer. Given a user task and workspace files, generate the necessary code changes.
-For each file you create or modify, format your response strictly using this syntax:
+		await execAsync(`git clone --depth 1 "${gh.cloneUrl}" "${tmpClone}"`, {
+			timeout: 60000,
+			env: getSanitizedEnv()
+		});
+		// Clear scratch placeholder files in target and move cloned repo in
+		for (const entry of fs.readdirSync(target)) {
+			fs.rmSync(path.join(target, entry), { recursive: true, force: true });
+		}
+		await execAsync(`cp -a "${tmpClone}/." "${target}/"`, { timeout: 30000, env: getSanitizedEnv() });
+		return { cloned: true, repoFullName: gh.repoFullName, cloneUrl: gh.cloneUrl };
+	} catch (e: any) {
+		console.error(`[Auto-PreFetcher] Failed to clone ${gh.cloneUrl}:`, e.message);
+		return { cloned: false };
+	} finally {
+		try {
+			if (fs.existsSync(tmpClone)) fs.rmSync(tmpClone, { recursive: true, force: true });
+		} catch {}
+	}
+}
 
-file:path/to/file.ext
-\`\`\`language
-<complete file content here>
-\`\`\`
+/**
+ * Fetches clean readable text/markdown from a public web URL.
+ * Uses Jina Reader (r.jina.ai) for clean Markdown extraction with direct HTML fallback.
+ */
+export async function fetchWebPageText(url: string, maxChars = 5500): Promise<string> {
+	if (!isSafePublicUrl(url)) {
+		return `[Blocked URL: ${url} is not a valid public HTTP/HTTPS address]`;
+	}
 
-Do not output git diff markers directly, just output the complete file contents inside the file: block.`;
+	// 1. Try Jina Reader for clean Markdown
+	try {
+		const res = await fetch(`https://r.jina.ai/${url}`, {
+			headers: { 'User-Agent': 'ProxmoxCodexBridge/2.3', 'X-Return-Format': 'markdown' },
+			signal: AbortSignal.timeout(12000)
+		});
+		if (res.ok) {
+			const text = await res.text();
+			if (text && text.trim().length > 80) {
+				return sanitizeForApi(text.trim(), maxChars);
+			}
+		}
+	} catch {}
 
-	const userContent = taskType === 'general'
-		? prompt
-		: `Workspace files:\n${fileList}\n\nTask:\n${prompt}`;
+	// 2. Fallback: direct HTTP fetch + HTML tag stripping
+	try {
+		const res = await fetch(url, {
+			headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) ProxmoxBridge/2.3' },
+			signal: AbortSignal.timeout(10000)
+		});
+		if (!res.ok) {
+			return `[HTTP ${res.status} fetching ${url}]`;
+		}
+		const html = await res.text();
+		const stripped = html
+			.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+			.replace(/<style[\s\S]*?<\/style>/gi, ' ')
+			.replace(/<[^>]+>/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+		return sanitizeForApi(stripped, maxChars);
+	} catch (e: any) {
+		return `[Error fetching ${url}: ${e.message}]`;
+	}
+}
 
+/**
+ * Performs a live web search via DuckDuckGo Lite and returns top results with titles, URLs, and snippets.
+ */
+export async function searchWebDuckDuckGo(query: string, maxResults = 6): Promise<string> {
+	if (!query || !query.trim()) return '(Empty search query)';
+	try {
+		const res = await fetch('https://lite.duckduckgo.com/lite/', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/x-www-form-urlencoded',
+				'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0'
+			},
+			body: 'q=' + encodeURIComponent(query.trim()),
+			signal: AbortSignal.timeout(12000)
+		});
+		if (!res.ok) return `[Web Search Error: HTTP ${res.status}]`;
+		const html = await res.text();
+		const strip = (s: string) =>
+			s
+				.replace(/<[^>]+>/g, '')
+				.replace(/&amp;/g, '&')
+				.replace(/&quot;/g, '"')
+				.replace(/&#x27;/g, "'")
+				.replace(/&lt;/g, '<')
+				.replace(/&gt;/g, '>')
+				.replace(/\s+/g, ' ')
+				.trim();
+
+		const results: string[] = [];
+		const regex = /<a[^>]+href=["']([^"']+)["'][^>]+class=['"]result-link['"][^>]*>([\s\S]*?)<\/a>[\s\S]*?<td[^>]+class=['"]result-snippet['"][^>]*>([\s\S]*?)<\/td>/gi;
+		let m;
+		while ((m = regex.exec(html)) !== null && results.length < maxResults) {
+			const href = m[1];
+			const title = strip(m[2]);
+			const snippet = strip(m[3]);
+			if (title && href) {
+				results.push(`${results.length + 1}. **${title}**\n   URL: ${href}\n   Snippet: ${snippet}`);
+			}
+		}
+		if (results.length === 0) {
+			return `No web search results found for "${query}".`;
+		}
+		return `Web Search Results for "${query}":\n\n` + results.join('\n\n');
+	} catch (e: any) {
+		return `[Web Search Error: ${e.message}]`;
+	}
+}
+
+/**
+ * Pre-fetches non-cloned web URLs found in the user prompt so DeepSeek can read external pages directly.
+ */
+export async function prefetchPromptWebUrls(
+	prompt: string,
+	clonedRepoFullName?: string,
+	onEvent?: (event: Record<string, any>) => Promise<void>
+): Promise<string> {
+	if (!prompt) return '';
+	const matches = prompt.match(/https?:\/\/[^\s)>\]"',;]+/gi) || [];
+	const uniqueUrls = [...new Set(matches.map(u => u.replace(/[.,;!?]+$/, '')))];
+
+	const toFetch = uniqueUrls.filter(u => {
+		if (!isSafePublicUrl(u)) return false;
+		// Skip the GitHub repo root URL if it was already cloned into the workspace
+		if (clonedRepoFullName && u.toLowerCase().includes(clonedRepoFullName.toLowerCase())) {
+			const afterRepo = u.split(new RegExp(clonedRepoFullName, 'i'))[1] || '';
+			if (afterRepo === '' || afterRepo === '/' || afterRepo.toLowerCase() === '.git') {
+				return false;
+			}
+		}
+		return true;
+	}).slice(0, 2);
+
+	if (toFetch.length === 0) return '';
+
+	if (onEvent) {
+		await onEvent({ type: 'stage', stage: `🌐 Auto-Fetching ${toFetch.length} Web URL(s) for DeepSeek...` });
+	}
+
+	const sections: string[] = [];
+	for (const url of toFetch) {
+		const content = await fetchWebPageText(url, 4500);
+		sections.push(`--- URL: ${url} ---\n${content}`);
+	}
+	return sections.join('\n\n');
+}
+
+/**
+ * Safely reads a file inside runDir for DeepSeek's [TOOL:READ_FILE] agent capability.
+ * Enforces path containment and realpath symlink checks.
+ */
+export function safeReadWorkspaceFile(runDir: string, relFilePath: string, maxChars = 4500): string {
+	if (!relFilePath || typeof relFilePath !== 'string') return '[Error: file path is required]';
+	const cleanRel = relFilePath.trim().replace(/^['"`]+|['"`]+$/g, '').replace(/^\/+/, '');
+	const root = path.resolve(runDir);
+	const target = path.resolve(root, cleanRel);
+	const rel = path.relative(root, target);
+
+	if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || rel.startsWith('../') || path.isAbsolute(rel)) {
+		return `[Error: Access denied — path '${cleanRel}' is outside workspace]`;
+	}
+	if (!fs.existsSync(target)) {
+		return `[Error: File '${cleanRel}' does not exist in workspace]`;
+	}
+	try {
+		const realRoot = fs.realpathSync(root);
+		const realTarget = fs.realpathSync(target);
+		const realRel = path.relative(realRoot, realTarget);
+		if (!realRel || realRel === '..' || realRel.startsWith(`..${path.sep}`) || realRel.startsWith('../') || path.isAbsolute(realRel)) {
+			return `[Error: Access denied — symlink escape detected for '${cleanRel}']`;
+		}
+		const stat = fs.statSync(realTarget);
+		if (stat.isDirectory()) {
+			const entries = fs.readdirSync(realTarget).slice(0, 60);
+			return `Directory '${cleanRel}' contents:\n` + entries.join('\n');
+		}
+		const content = fs.readFileSync(realTarget, 'utf8');
+		return sanitizeForApi(content, maxChars);
+	} catch (e: any) {
+		return `[Error reading '${cleanRel}': ${e.message}]`;
+	}
+}
+
+/**
+ * Builds a rich Workspace Context Snapshot (file tree + README.md + key manifest & code files)
+ * so DeepSeek R1 immediately sees real repository contents without guessing.
+ */
+export async function buildWorkspaceSnapshot(runDir: string, maxTotalChars = 10000): Promise<string> {
+	let fileList: string[] = [];
+	try {
+		const { stdout } = await execAsync('git ls-files', { cwd: runDir, env: getSanitizedEnv() });
+		fileList = stdout.split('\n').map(f => f.trim()).filter(Boolean);
+	} catch {
+		try {
+			fileList = fs.readdirSync(runDir).filter(f => !f.startsWith('.'));
+		} catch {}
+	}
+
+	if (fileList.length === 0) return '(Empty workspace)';
+
+	const parts: string[] = [];
+	parts.push(`=== WORKSPACE FILE TREE (${fileList.length} files) ===\n${fileList.slice(0, 100).join('\n')}`);
+	let usedChars = parts[0].length;
+
+	// Priority files to automatically include in context snapshot
+	const priorityNames = [
+		'README.md', 'readme.md', 'README.txt',
+		'package.json', 'requirements.txt', 'pyproject.toml', 'Cargo.toml', 'go.mod',
+		'Dockerfile', 'docker-compose.yml', 'config.py', 'app.py', 'main.py',
+		'src/index.ts', 'src/main.ts', 'src/app.ts', 'server.ts', 'server.mjs'
+	];
+
+	const selectedFiles: string[] = [];
+	for (const pName of priorityNames) {
+		if (fileList.includes(pName) && !selectedFiles.includes(pName)) {
+			selectedFiles.push(pName);
+		}
+	}
+
+	// Also pick up to 5 key source files (e.g. in services/, src/, app/)
+	for (const f of fileList) {
+		if (selectedFiles.length >= 9) break;
+		if (selectedFiles.includes(f)) continue;
+		if (
+			/\.(py|ts|js|svelte|go|rs|java|kt)$/i.test(f) &&
+			!f.includes('test') &&
+			!f.includes('node_modules') &&
+			!f.endsWith('.min.js')
+		) {
+			selectedFiles.push(f);
+		}
+	}
+
+	for (const relPath of selectedFiles) {
+		if (usedChars >= maxTotalChars) break;
+		const fullPath = path.join(runDir, relPath);
+		try {
+			if (!fs.existsSync(fullPath) || fs.statSync(fullPath).isDirectory()) continue;
+			const raw = fs.readFileSync(fullPath, 'utf8');
+			// Skip auto-generated scratch README placeholder
+			if (relPath.toLowerCase() === 'readme.md' && raw.includes('Automated scratch workspace created for prompt:')) {
+				continue;
+			}
+			const budget = Math.min(3000, maxTotalChars - usedChars);
+			if (budget < 200) break;
+			const snippet = sanitizeForApi(raw, budget);
+			const block = `\n--- FILE: ${relPath} ---\n${snippet}`;
+			parts.push(block);
+			usedChars += block.length;
+		} catch {}
+	}
+
+	return parts.join('\n');
+}
+
+/**
+ * Unified Streaming KMITL DeepSeek API Client.
+ * Always uses `stream: true` (prevents Nginx 504 Gateway Time-out during long <think> blocks)
+ * and `options: { num_ctx: 16384 }` (prevents HTTP 400 context window 4096 overflow).
+ */
+export async function callKmitlDeepSeekStream(
+	messages: Array<{ role: string; content: string }>,
+	numCtx = 16384
+): Promise<{
+	thinking: string;
+	reply: string;
+	promptTokens: number;
+	completionTokens: number;
+	cachedTokens: number;
+}> {
 	const res = await fetch(KMITL_API_URL, {
 		method: 'POST',
 		headers: {
@@ -503,16 +797,14 @@ Do not output git diff markers directly, just output the complete file contents 
 		},
 		body: JSON.stringify({
 			model: DEEPSEEK_MODEL,
-			messages: [
-				{ role: 'system', content: systemPrompt },
-				{ role: 'user', content: userContent }
-			],
+			messages,
+			options: { num_ctx: numCtx },
 			stream: true
 		})
 	});
 
 	if (!res.ok) {
-		const errText = await res.text();
+		const errText = await res.text().catch(() => '');
 		throw new Error(`KMITL API Error (${res.status}): ${errText}`);
 	}
 
@@ -521,7 +813,7 @@ Do not output git diff markers directly, just output the complete file contents 
 	let buffer = '';
 	let thinking = '';
 	let reply = '';
-	let promptTokens = 35;
+	let promptTokens = 0;
 	let completionTokens = 0;
 	let cachedTokens = 0;
 
@@ -541,37 +833,230 @@ Do not output git diff markers directly, just output the complete file contents 
 					if (json.prompt_eval_count) promptTokens = json.prompt_eval_count;
 					if (json.eval_count) completionTokens = json.eval_count;
 					if (json.prompt_eval_cached_count) cachedTokens = json.prompt_eval_cached_count;
-				} catch (e) {}
+				} catch {}
 			}
 		}
 	}
 
-	const fullLogs = thinking ? `<think>\n${thinking}\n</think>\n\n${reply}` : reply;
-	const totalTokens = promptTokens + completionTokens;
+	return { thinking, reply, promptTokens, completionTokens, cachedTokens };
+}
 
-	// Parse file blocks and write to disk
-	let modifiedFiles = 0;
-	const regex = /(?:file:([^\n\r]+)[\r\n]+)?```[a-zA-Z0-9_\-]*[\r\n]+([\s\S]*?)```/g;
-	let match;
-	while ((match = regex.exec(reply)) !== null) {
-		let filePath = match[1]?.trim();
-		const fileContent = match[2];
-		
-		if (!filePath) {
-			const firstLine = fileContent.trim().split('\n')[0];
-			if (firstLine.startsWith('//') || firstLine.startsWith('#')) {
-				const candidate = firstLine.replace(/^(\/\/|#)\s*/, '').trim();
-				if (candidate.includes('.') && !candidate.includes(' ')) {
-					filePath = candidate;
-				}
-			}
+export async function runCodexTask(
+	target: string,
+	prompt: string,
+	branchName: string,
+	cwdOverride?: string,
+	hasClonedRepo = false
+): Promise<TaskResult> {
+	const runDir = cwdOverride || target;
+	if (!cwdOverride) {
+		try {
+			await execAsync(`git checkout -b ${branchName}`, { cwd: target });
+		} catch (e) {}
+	}
+
+	const taskType = detectTaskType(prompt);
+	const repoAvailable = hasClonedRepo || !isScratchWorkspace(runDir);
+
+	let effectivePrompt = prompt;
+	if (taskType === 'general') {
+		if (repoAvailable) {
+			effectivePrompt = `[TASK TYPE: REPOSITORY ANALYSIS / ADVISORY CONSULTATION]
+Note: The target repository is ALREADY cloned directly in your current working directory (${runDir}).
+TOKEN-SAVING RULES:
+1. Do NOT run \`git clone\` into /tmp — the files are already right here in ${runDir}.
+2. Read files selectively (e.g. README.md and key modules) without dumping entire huge files into stdout unnecessarily.
+3. Do NOT modify or create any files unless the user explicitly asked to edit files. Respond comprehensively in the requested language (e.g. Thai).
+
+User Question:
+${prompt}`;
+		} else {
+			effectivePrompt = `[TASK TYPE: GENERAL CONSULTATION / ADVISORY / PLANNING]
+Note: This is a general query, planning, or advisory question (NOT a file-editing code task).
+Please respond directly, thoroughly, and comprehensively to the user's question in the requested language (e.g. Thai).
+Do NOT attempt to search workspace files with rg/find or edit files unless explicitly instructed.
+
+User Question:
+${prompt}`;
+		}
+	} else if (repoAvailable) {
+		effectivePrompt = `[Workspace Note: The target repository files are already present in your working directory (${runDir}). Do NOT clone into /tmp.]\n\n${prompt}`;
+	}
+
+	let stdout = '';
+	let stderr = '';
+	const res = await execCodexWithStdin(runDir, effectivePrompt, 15 * 60 * 1000);
+	stdout = res.stdout;
+	stderr = res.stderr;
+	const { stdout: diff } = await execAsync('git diff', { cwd: runDir });
+	const { stdout: status } = await execAsync('git status -s', { cwd: runDir });
+	const tokens = getLatestTokenUsage();
+
+	return {
+		provider: 'Codex (gpt-6.1-sol)',
+		branch: branchName,
+		status: status.trim() || 'Clean',
+		diff: diff.trim() || '(No tracked files modified)',
+		logs: (stdout + '\n' + stderr).trim(),
+		tokens: tokens || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, net_tokens: 0 }
+	};
+}
+
+export async function runDeepSeekTask(
+	target: string,
+	prompt: string,
+	branchName: string,
+	cwdOverride?: string,
+	preFetchedWebContext = '',
+	onEvent?: (event: Record<string, any>) => Promise<void>
+): Promise<TaskResult> {
+	const runDir = cwdOverride || target;
+	if (!cwdOverride) {
+		try {
+			await execAsync(`git checkout -b ${branchName}`, { cwd: target });
+		} catch (e) {}
+	}
+
+	const taskType = detectTaskType(prompt);
+	const workspaceSnapshot = await buildWorkspaceSnapshot(runDir, 10000);
+
+	const toolInstructions = `
+=== AGENTIC TOOLS AVAILABLE (EXECUTED BY PROXMOX BRIDGE) ===
+You have live access to the workspace files and the internet via the Proxmox Bridge!
+If the provided Workspace Snapshot or Pre-Fetched Web Content below is not enough and you need to inspect additional files or search the internet before answering, output one or more tool commands on their own line:
+- To read a specific file in the workspace:
+  [TOOL:READ_FILE] path/to/file.ext
+- To list files in a subdirectory:
+  [TOOL:LIST_FILES] path/to/dir
+- To search the internet (DuckDuckGo):
+  [TOOL:WEB_SEARCH] your search query
+- To fetch a specific web page URL:
+  [TOOL:FETCH_URL] https://example.com/page
+
+If you already have enough information in the Workspace Snapshot and Pre-Fetched Web Content below, answer the user's request directly and thoroughly without outputting [TOOL:...] lines.`;
+
+	const systemPrompt = taskType === 'general'
+		? `You are an expert AI Software Architect, Advisor, and Analyst running on the Proxmox Multi-Agent Bridge.
+Provide a clear, accurate, evidence-based, and comprehensive response in the requested language (e.g. Thai).
+Base your analysis strictly on the real Workspace Snapshot, Pre-Fetched Web Content, and any Tool results. Never guess or hallucinate repository contents.
+Do NOT output file: blocks or modify files unless explicitly asked to write files.
+${toolInstructions}`
+		: `You are an expert software engineer running on the Proxmox Multi-Agent Bridge. Given a user task and workspace files, generate the necessary code changes.
+For each file you create or modify, format your response strictly using this syntax:
+
+file:path/to/file.ext
+\`\`\`language
+<complete file content here>
+\`\`\`
+
+Do not output git diff markers directly, just output the complete file contents inside the file: block.
+${toolInstructions}`;
+
+	const contextSections: string[] = [];
+	if (workspaceSnapshot && workspaceSnapshot !== '(Empty workspace)') {
+		contextSections.push(workspaceSnapshot);
+	}
+	if (preFetchedWebContext) {
+		contextSections.push(`=== PRE-FETCHED WEB CONTENT ===\n${preFetchedWebContext}`);
+	}
+	contextSections.push(`=== USER TASK / QUESTION ===\n${prompt}`);
+
+	const messages: Array<{ role: string; content: string }> = [
+		{ role: 'system', content: systemPrompt },
+		{ role: 'user', content: contextSections.join('\n\n') }
+	];
+
+	const MAX_AGENT_TURNS = 3;
+	let allThinking: string[] = [];
+	let finalReply = '';
+	let totalPromptTokens = 0;
+	let totalCompletionTokens = 0;
+	let totalCachedTokens = 0;
+
+	for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
+		const step = await callKmitlDeepSeekStream(messages, 16384);
+		if (step.thinking) {
+			allThinking.push(turn === 0 ? step.thinking : `[Turn ${turn + 1} Thinking]\n${step.thinking}`);
+		}
+		totalPromptTokens += step.promptTokens || 35;
+		totalCompletionTokens += step.completionTokens || 0;
+		totalCachedTokens += step.cachedTokens || 0;
+		finalReply = step.reply;
+
+		// Check if DeepSeek invoked any [TOOL:...] commands
+		const toolRegex = /\[TOOL:(READ_FILE|LIST_FILES|WEB_SEARCH|FETCH_URL)\]\s*([^\r\n]+)/gi;
+		const toolCalls: Array<{ type: string; arg: string }> = [];
+		let tMatch;
+		while ((tMatch = toolRegex.exec(step.reply)) !== null && toolCalls.length < 4) {
+			toolCalls.push({ type: tMatch[1].toUpperCase(), arg: tMatch[2].trim() });
 		}
 
-		if (filePath) {
-			const absPath = path.join(runDir, filePath);
-			fs.mkdirSync(path.dirname(absPath), { recursive: true });
-			fs.writeFileSync(absPath, fileContent, 'utf8');
-			modifiedFiles++;
+		// If no tool calls or last turn, we are done!
+		if (toolCalls.length === 0 || turn === MAX_AGENT_TURNS - 1) {
+			break;
+		}
+
+		// Execute requested tools on Proxmox CT
+		const toolResults: string[] = [];
+		for (const tc of toolCalls) {
+			if (onEvent) {
+				await onEvent({ type: 'stage', stage: `🔍 DeepSeek Agent Tool: ${tc.type} (${tc.arg.slice(0, 45)})...` });
+			}
+			let resText = '';
+			if (tc.type === 'READ_FILE') {
+				resText = safeReadWorkspaceFile(runDir, tc.arg, 4500);
+			} else if (tc.type === 'LIST_FILES') {
+				resText = safeReadWorkspaceFile(runDir, tc.arg || '.', 3000);
+			} else if (tc.type === 'WEB_SEARCH') {
+				resText = await searchWebDuckDuckGo(tc.arg, 5);
+			} else if (tc.type === 'FETCH_URL') {
+				resText = await fetchWebPageText(tc.arg, 4500);
+			}
+			toolResults.push(`=== RESULT OF [TOOL:${tc.type}] ${tc.arg} ===\n${resText}`);
+			allThinking.push(`🔧 [Executed Tool: ${tc.type} "${tc.arg}"] (${resText.length} chars returned)`);
+		}
+
+		messages.push({ role: 'assistant', content: step.reply });
+		messages.push({
+			role: 'user',
+			content: `${toolResults.join('\n\n')}\n\nNow provide your complete, final response to the user's original task in the requested language (e.g. Thai) based on all gathered evidence. Do NOT output further [TOOL:...] commands.`
+		});
+	}
+
+	const combinedThinking = allThinking.join('\n\n');
+	const fullLogs = combinedThinking ? `<think>\n${combinedThinking}\n</think>\n\n${finalReply}` : finalReply;
+	const totalTokens = totalPromptTokens + totalCompletionTokens;
+	const netTokens = Math.max(0, totalTokens - totalCachedTokens);
+
+	// Only parse file blocks and write to disk if this is a code modification task (or explicit file: prefix)
+	let modifiedFiles = 0;
+	if (taskType === 'code') {
+		const regex = /(?:file:([^\n\r]+)[\r\n]+)?```[a-zA-Z0-9_\-]*[\r\n]+([\s\S]*?)```/g;
+		let match;
+		while ((match = regex.exec(finalReply)) !== null) {
+			let filePath = match[1]?.trim();
+			const fileContent = match[2];
+
+			if (!filePath) {
+				const firstLine = fileContent.trim().split('\n')[0];
+				if (firstLine.startsWith('//') || firstLine.startsWith('#')) {
+					const candidate = firstLine.replace(/^(\/\/|#)\s*/, '').trim();
+					if (candidate.includes('.') && !candidate.includes(' ')) {
+						filePath = candidate;
+					}
+				}
+			}
+
+			if (filePath) {
+				const root = path.resolve(runDir);
+				const absPath = path.resolve(root, filePath.replace(/^\/+/, ''));
+				const rel = path.relative(root, absPath);
+				if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+					fs.mkdirSync(path.dirname(absPath), { recursive: true });
+					fs.writeFileSync(absPath, fileContent, 'utf8');
+					modifiedFiles++;
+				}
+			}
 		}
 	}
 
@@ -586,9 +1071,10 @@ Do not output git diff markers directly, just output the complete file contents 
 		logs: fullLogs.trim(),
 		tokens: {
 			total_tokens: totalTokens,
-			input_tokens: promptTokens,
-			cached_input_tokens: cachedTokens,
-			output_tokens: completionTokens
+			input_tokens: totalPromptTokens,
+			cached_input_tokens: totalCachedTokens,
+			output_tokens: totalCompletionTokens,
+			net_tokens: netTokens
 		}
 	};
 }
@@ -781,11 +1267,18 @@ export async function executeTaskPipeline(
 	const timestamp = Date.now();
 	if (onEvent) await onEvent({ type: 'status', status: 'running', workspace: activeWorkspace });
 
+	// Pre-Fetcher: Auto-clone GitHub repository if prompt contains a GitHub repo URL in a scratch workspace
+	const clonedRepo = await autoCloneGitHubRepoIfNeeded(target, prompt, onEvent);
+	// Pre-Fetcher: Auto-fetch any external web URLs for DeepSeek context
+	const preFetchedWebContext = provider !== 'codex'
+		? await prefetchPromptWebUrls(prompt, clonedRepo.repoFullName, onEvent)
+		: '';
+
 	// DeepSeek Only
 	if (provider === 'deepseek') {
 		const taskBranch = branch?.trim() || `agent/deepseek-${timestamp}`;
-		if (onEvent) await onEvent({ type: 'stage', stage: 'Executing DeepSeek R1 (14b GPU)...' });
-		const result = await runDeepSeekTask(target, prompt, taskBranch);
+		if (onEvent) await onEvent({ type: 'stage', stage: 'Executing DeepSeek R1 (14b GPU + ReAct Web/File Agent)...' });
+		const result = await runDeepSeekTask(target, prompt, taskBranch, undefined, preFetchedWebContext, onEvent);
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Running Evidence Test Gate...' });
 		const testEvidence = await runTestGate(target);
@@ -820,17 +1313,23 @@ export async function executeTaskPipeline(
 
 		try {
 			if (onEvent) await onEvent({ type: 'stage', stage: 'Running Codex and DeepSeek concurrently...' });
-			const deepseekPromise = runDeepSeekTask(target, prompt, deepseekBranch, deepseekWorktree.worktreePath)
-				.catch(err => ({
-					provider: 'DeepSeek R1 (14b GPU)',
-					branch: deepseekBranch,
-					status: 'Failed',
-					diff: '',
-					logs: `DeepSeek Error: ${err.message}`,
-					tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
-				}));
+			const deepseekPromise = runDeepSeekTask(
+				target,
+				prompt,
+				deepseekBranch,
+				deepseekWorktree.worktreePath,
+				preFetchedWebContext,
+				onEvent
+			).catch(err => ({
+				provider: 'DeepSeek R1 (14b GPU)',
+				branch: deepseekBranch,
+				status: 'Failed',
+				diff: '',
+				logs: `DeepSeek Error: ${err.message}`,
+				tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, net_tokens: 0 }
+			}));
 
-			codexRes = await runCodexTask(target, prompt, codexBranch, codexWorktree.worktreePath);
+			codexRes = await runCodexTask(target, prompt, codexBranch, codexWorktree.worktreePath, clonedRepo.cloned);
 			deepseekRes = await deepseekPromise;
 		} finally {
 			await cleanupWorktree(target, codexWorktree, `Codex: ${prompt.slice(0, 50)}`);
@@ -840,11 +1339,14 @@ export async function executeTaskPipeline(
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Running Evidence Test Gate...' });
 		const testEvidence = await runTestGate(target);
 
+		const totalTok = (codexRes.tokens?.total_tokens || 0) + (deepseekRes.tokens?.total_tokens || 0);
+		const cachedTok = (codexRes.tokens?.cached_input_tokens || 0) + (deepseekRes.tokens?.cached_input_tokens || 0);
 		const combinedTokens = {
-			total_tokens: (codexRes.tokens?.total_tokens || 0) + (deepseekRes.tokens?.total_tokens || 0),
+			total_tokens: totalTok,
 			input_tokens: (codexRes.tokens?.input_tokens || 0) + (deepseekRes.tokens?.input_tokens || 0),
-			cached_input_tokens: (codexRes.tokens?.cached_input_tokens || 0),
-			output_tokens: (codexRes.tokens?.output_tokens || 0) + (deepseekRes.tokens?.output_tokens || 0)
+			cached_input_tokens: cachedTok,
+			output_tokens: (codexRes.tokens?.output_tokens || 0) + (deepseekRes.tokens?.output_tokens || 0),
+			net_tokens: Math.max(0, totalTok - cachedTok)
 		};
 
 		saveTaskToHistory({
@@ -878,6 +1380,7 @@ export async function executeTaskPipeline(
 		const codexPropBranch = `agent/codex-prop-${timestamp}`;
 		const deepseekPropBranch = `agent/deepseek-prop-${timestamp}`;
 		const consensusBranch = branch?.trim() || `agent/consensus-${timestamp}`;
+		const taskType = detectTaskType(prompt);
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 1: Parallel Generation in Worktrees...' });
 		const codexWorktree = await prepareWorktree(target, codexPropBranch, 'codex-prop');
@@ -887,24 +1390,30 @@ export async function executeTaskPipeline(
 		let deepseekProp: any;
 
 		try {
-			const deepseekPromise = runDeepSeekTask(target, prompt, deepseekPropBranch, deepseekWorktree.worktreePath)
-				.catch(err => ({
-					provider: 'DeepSeek R1 (14b GPU)',
-					branch: deepseekPropBranch,
-					status: 'Failed',
-					diff: '',
-					logs: `DeepSeek Error: ${err.message}`,
-					tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
-				}));
+			const deepseekPromise = runDeepSeekTask(
+				target,
+				prompt,
+				deepseekPropBranch,
+				deepseekWorktree.worktreePath,
+				preFetchedWebContext,
+				onEvent
+			).catch(err => ({
+				provider: 'DeepSeek R1 (14b GPU)',
+				branch: deepseekPropBranch,
+				status: 'Failed',
+				diff: '',
+				logs: `DeepSeek Error: ${err.message}`,
+				tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, net_tokens: 0 }
+			}));
 
-			codexProp = await runCodexTask(target, prompt, codexPropBranch, codexWorktree.worktreePath);
+			codexProp = await runCodexTask(target, prompt, codexPropBranch, codexWorktree.worktreePath, clonedRepo.cloned);
 			deepseekProp = await deepseekPromise;
 		} finally {
 			await cleanupWorktree(target, codexWorktree, `Proposal Codex: ${prompt.slice(0, 50)}`);
 			await cleanupWorktree(target, deepseekWorktree, `Proposal DeepSeek: ${prompt.slice(0, 50)}`);
 		}
 
-		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 2: Bilateral Cross-Review...' });
+		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 2: Bilateral Cross-Review (Streaming)...' });
 		const deepseekReviewPrompt = `[TASK TYPE: GENERAL CONSULTATION / PEER REVIEW AUDIT]
 You are a Principal Software Architect & Auditor conducting a peer review of a solution proposed by OpenAI Codex for the following task.
 
@@ -912,10 +1421,10 @@ You are a Principal Software Architect & Auditor conducting a peer review of a s
 ${prompt}
 
 === OPENAI CODEX PROPOSAL & OUTPUT ===
-${sanitizeForApi(codexProp.logs, 6000)}
+${sanitizeForApi(codexProp.logs, 4500)}
 
 === CODEX'S GIT DIFF ===
-${codexProp.diff || '(No diff recorded)'}
+${sanitizeForApi(codexProp.diff || '(No diff recorded)', 2500)}
 
 Please provide your rigorous peer review in Thai (and English for technical terms):
 1. จุดเด่นของแนวทางนี้ (Key Strengths)
@@ -924,45 +1433,39 @@ Please provide your rigorous peer review in Thai (and English for technical term
 
 		const codexReviewPrompt = `[TASK TYPE: GENERAL CONSULTATION / PEER REVIEW AUDIT]
 You are a Principal Software Architect & Auditor conducting a peer review of a solution proposed by DeepSeek R1 for the following task.
+IMPORTANT TOKEN-SAVING RULE: Do NOT execute any shell commands (no rg, no cat, no find, no git clone) during this peer review. All necessary context is already provided below. Respond directly based on Proposal B's text and diff.
 
 === ORIGINAL TASK ===
 ${prompt}
 
 === DEEPSEEK R1 PROPOSAL & OUTPUT ===
-${sanitizeForApi(deepseekProp.logs, 6000)}
+${sanitizeForApi(deepseekProp.logs, 5000)}
 
 === DEEPSEEK R1 GIT DIFF ===
-${deepseekProp.diff || '(No diff recorded)'}
+${sanitizeForApi(deepseekProp.diff || '(No diff recorded)', 2500)}
 
 Please provide your rigorous peer review in Thai (and English for technical terms):
 1. จุดเด่นของแนวทางนี้ (Key Strengths)
 2. จุดบกพร่อง ช่องโหว่ หรือ Edge Cases ที่อาจเกิดขึ้น (Flaws, Vulnerabilities & Edge Cases)
 3. ข้อเสนอแนะในการปรับปรุงให้สมบูรณ์ยิ่งขึ้น (Actionable Improvements)`;
 
+		let deepseekReviewTokens = { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
 		const deepseekReviewPromise = (async () => {
-			const res = await fetch(KMITL_API_URL, {
-				method: 'POST',
-				headers: {
-					'Authorization': `Bearer ${KMITL_TOKEN}`,
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({
-					model: DEEPSEEK_MODEL,
-					messages: [
-						{ role: 'system', content: 'You are a Senior Software Architect and Code Auditor providing high-standard constructive peer reviews in Thai.' },
-						{ role: 'user', content: deepseekReviewPrompt }
-					],
-					stream: false
-				})
-			});
-			if (!res.ok) {
-				const errText = await res.text().catch(() => '');
-				return `DeepSeek Review failed (${res.status} ${res.statusText}): ${errText || 'Empty error body'}`;
-			}
-			const data = await res.json();
-			const msg = data.message?.content || data.choices?.[0]?.message?.content || '';
-			const think = data.message?.thinking ? `<think>\n${data.message.thinking}\n</think>\n\n` : '';
-			return (think + msg).trim();
+			const revStep = await callKmitlDeepSeekStream(
+				[
+					{ role: 'system', content: 'You are a Senior Software Architect and Code Auditor providing high-standard constructive peer reviews in Thai.' },
+					{ role: 'user', content: deepseekReviewPrompt }
+				],
+				16384
+			);
+			deepseekReviewTokens = {
+				total_tokens: (revStep.promptTokens || 0) + (revStep.completionTokens || 0),
+				input_tokens: revStep.promptTokens || 0,
+				cached_input_tokens: revStep.cachedTokens || 0,
+				output_tokens: revStep.completionTokens || 0
+			};
+			const think = revStep.thinking ? `<think>\n${revStep.thinking}\n</think>\n\n` : '';
+			return (think + revStep.reply).trim();
 		})().catch(err => `DeepSeek Review Error: ${err.message}`);
 
 		const codexReviewPromise = (async () => {
@@ -976,6 +1479,16 @@ Please provide your rigorous peer review in Thai (and English for technical term
 		]);
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 3: Consensus Harmonization...' });
+		const mandateRules = taskType === 'general'
+			? `=== YOUR MANDATE (ANALYSIS / ADVISORY MODE — STRICT TOKEN SAVING) ===
+1. IMPORTANT: Do NOT run shell commands (\`rg\`, \`cat\`, \`git clone\`) to re-scan the repository from scratch, and do NOT modify or create any files in the workspace.
+2. Synthesize the final authoritative Consensus Response directly from the verified facts in Proposal A, Proposal B, and both Peer Reviews below.
+3. Conclude with a clear Consensus Summary in Thai explaining what was harmonized and why this consensus is superior to each individual proposal alone.`
+			: `=== YOUR MANDATE ===
+1. Synthesize the final agreed solution (Consensus Solution), taking the best parts of both proposals and solving all issues raised in the peer reviews.
+2. Apply the final, production-ready code directly into the workspace files without unnecessary re-scanning.
+3. Conclude with a clear Consensus Summary explaining what was harmonized and why this consensus is superior to each individual proposal alone.`;
+
 		const consensusPrompt = `[TASK TYPE: CONSENSUS HARMONIZATION & FINAL IMPLEMENTATION]
 You are the Lead Consensus Multi-Agent Orchestrator.
 We have executed a multi-agent debate and peer review between OpenAI Codex and DeepSeek R1.
@@ -985,28 +1498,25 @@ ${prompt}
 
 === PROPOSAL A (Codex) ===
 ${codexProp.logs.slice(0, 5000)}
-Diff: ${codexProp.diff || 'none'}
+Diff: ${sanitizeForApi(codexProp.diff || 'none', 2500)}
 
 === PEER REVIEW OF PROPOSAL A (by DeepSeek R1) ===
 ${deepseekReviewOfCodex.slice(0, 3500)}
 
 === PROPOSAL B (DeepSeek R1) ===
 ${deepseekProp.logs.slice(0, 5000)}
-Diff: ${deepseekProp.diff || 'none'}
+Diff: ${sanitizeForApi(deepseekProp.diff || 'none', 2500)}
 
 === PEER REVIEW OF PROPOSAL B (by Codex) ===
 ${codexReviewOfDeepSeek.slice(0, 3500)}
 
-=== YOUR MANDATE ===
-1. Synthesize the final agreed solution (Consensus Solution), taking the best parts of both proposals and solving all issues raised in the peer reviews.
-2. If this is a Code Task, apply the final, production-ready code directly into the workspace files.
-3. Conclude with a clear Consensus Summary explaining what was harmonized and why this consensus is superior to each individual proposal alone.`;
+${mandateRules}`;
 
 		try {
 			await execAsync(`git checkout -b ${consensusBranch}`, { cwd: target });
 		} catch (e) {}
 
-		const finalSolution = await runCodexTask(target, consensusPrompt, consensusBranch);
+		const finalSolution = await runCodexTask(target, consensusPrompt, consensusBranch, undefined, clonedRepo.cloned);
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 4: Automated Evidence Test Gate...' });
 		const testEvidence = await runTestGate(target);
@@ -1023,18 +1533,25 @@ ${codexReviewOfDeepSeek.slice(0, 3500)}
 
 		const totalTokens = (codexProp.tokens?.total_tokens || 0) +
 			(deepseekProp.tokens?.total_tokens || 0) +
+			(deepseekReviewTokens.total_tokens || 0) +
 			(finalSolution.tokens?.total_tokens || 0);
 
 		const inputTokens = (codexProp.tokens?.input_tokens || 0) +
 			(deepseekProp.tokens?.input_tokens || 0) +
+			(deepseekReviewTokens.input_tokens || 0) +
 			(finalSolution.tokens?.input_tokens || 0);
 
 		const cachedTokens = (codexProp.tokens?.cached_input_tokens || 0) +
+			(deepseekProp.tokens?.cached_input_tokens || 0) +
+			(deepseekReviewTokens.cached_input_tokens || 0) +
 			(finalSolution.tokens?.cached_input_tokens || 0);
 
 		const outputTokens = (codexProp.tokens?.output_tokens || 0) +
 			(deepseekProp.tokens?.output_tokens || 0) +
+			(deepseekReviewTokens.output_tokens || 0) +
 			(finalSolution.tokens?.output_tokens || 0);
+
+		const netTokens = Math.max(0, totalTokens - cachedTokens);
 
 		saveTaskToHistory({
 			workspace: activeWorkspace,
@@ -1048,7 +1565,8 @@ ${codexReviewOfDeepSeek.slice(0, 3500)}
 				total_tokens: totalTokens,
 				input_tokens: inputTokens,
 				cached_input_tokens: cachedTokens,
-				output_tokens: outputTokens
+				output_tokens: outputTokens,
+				net_tokens: netTokens
 			},
 			mode: 'consensus',
 			consensus: consensusData,
@@ -1069,7 +1587,8 @@ ${codexReviewOfDeepSeek.slice(0, 3500)}
 				total_tokens: totalTokens,
 				input_tokens: inputTokens,
 				cached_input_tokens: cachedTokens,
-				output_tokens: outputTokens
+				output_tokens: outputTokens,
+				net_tokens: netTokens
 			}
 		};
 	}
@@ -1104,7 +1623,7 @@ ${codexReviewOfDeepSeek.slice(0, 3500)}
 	// Default: Codex Only
 	const taskBranch = branch?.trim() || `agent/codex-${timestamp}`;
 	if (onEvent) await onEvent({ type: 'stage', stage: 'Executing OpenAI Codex (gpt-6.1-sol)...' });
-	const result = await runCodexTask(target, prompt, taskBranch);
+	const result = await runCodexTask(target, prompt, taskBranch, undefined, clonedRepo.cloned);
 
 	if (onEvent) await onEvent({ type: 'stage', stage: 'Running Evidence Test Gate...' });
 	const testEvidence = await runTestGate(target);

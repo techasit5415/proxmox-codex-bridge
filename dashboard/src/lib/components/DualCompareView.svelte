@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Layers } from 'lucide-svelte';
 	import type { TaskResult } from '../types';
-	import { fmtTokens, extractThoughtAndBody } from '../types';
+	import { fmtTokenBadge, extractThoughtAndBody } from '../types';
 	import ChainOfThought from './ChainOfThought.svelte';
 	import DiffViewer from './DiffViewer.svelte';
 
@@ -50,10 +50,10 @@
 	<!-- Quick Tokens Summary -->
 	<div class="flex items-center gap-2 text-[11px]">
 		<span class="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-emerald-400">
-			Codex: {fmtTokens(codex.tokens?.total_tokens)} tok
+			Codex: {fmtTokenBadge(codex.tokens)}
 		</span>
 		<span class="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-violet-400">
-			DeepSeek: {fmtTokens(deepseek.tokens?.total_tokens)} tok
+			DeepSeek: {fmtTokenBadge(deepseek.tokens)}
 		</span>
 	</div>
 </div>
@@ -69,7 +69,7 @@
 					<span class="font-bold text-zinc-100 text-xs">Codex (gpt-6.1-sol)</span>
 					<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">{codex.branch}</span>
 				</div>
-				<span class="text-[11px] text-zinc-400">{fmtTokens(codex.tokens?.total_tokens)} tok</span>
+				<span class="text-[11px] text-emerald-400">{fmtTokenBadge(codex.tokens)}</span>
 			</div>
 
 			<div class="rounded-b-lg border-x border-b border-zinc-800 bg-zinc-900/40 p-3.5 flex flex-col gap-2">
@@ -89,7 +89,7 @@
 					<span class="font-bold text-violet-200 text-xs">DeepSeek R1 (14b GPU)</span>
 					<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300">{deepseek.branch}</span>
 				</div>
-				<span class="text-[11px] text-violet-300">{fmtTokens(deepseek.tokens?.total_tokens)} tok</span>
+				<span class="text-[11px] text-violet-300">{fmtTokenBadge(deepseek.tokens)}</span>
 			</div>
 
 			{#if deepseekParsed.thoughts}
@@ -115,7 +115,7 @@
 				<span class="font-bold text-zinc-100 text-xs">Codex (gpt-6.1-sol)</span>
 				<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">{codex.branch}</span>
 			</div>
-			<span class="text-[11px] text-zinc-400">{fmtTokens(codex.tokens?.total_tokens)} tokens</span>
+			<span class="text-[11px] text-emerald-400">{fmtTokenBadge(codex.tokens)}</span>
 		</div>
 
 		<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 flex flex-col gap-2.5">
@@ -136,7 +136,7 @@
 				<span class="font-bold text-violet-200 text-xs">DeepSeek R1 (14b GPU)</span>
 				<span class="text-[10px] px-1.5 py-0.2 rounded bg-violet-900/60 text-violet-300">{deepseek.branch}</span>
 			</div>
-			<span class="text-[11px] text-violet-300">{fmtTokens(deepseek.tokens?.total_tokens)} tokens</span>
+			<span class="text-[11px] text-violet-300">{fmtTokenBadge(deepseek.tokens)}</span>
 		</div>
 
 		{#if deepseekParsed.thoughts}

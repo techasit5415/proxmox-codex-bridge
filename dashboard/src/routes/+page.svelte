@@ -203,10 +203,13 @@
 		taskBadgeType = 'idle';
 
 		if (fullItem.tokens) {
+			const tot = fullItem.tokens.total_tokens || 0;
+			const cached = fullItem.tokens.cached_input_tokens || 0;
 			tokenStats = {
-				totalTokens: fullItem.tokens.total_tokens || 0,
+				totalTokens: tot,
+				netTokens: fullItem.tokens.net_tokens ?? Math.max(0, tot - cached),
 				inputTokens: fullItem.tokens.input_tokens || 0,
-				cachedTokens: fullItem.tokens.cached_input_tokens || 0,
+				cachedTokens: cached,
 				outputTokens: fullItem.tokens.output_tokens || 0,
 				sessionCount: history.length,
 				latest: fullItem.tokens
@@ -453,10 +456,13 @@
 		if (data.history && data.history.length > 0) {
 			history = data.history;
 			if (data.history[0]?.tokens) {
+				const tot = data.history[0].tokens.total_tokens || 0;
+				const cached = data.history[0].tokens.cached_input_tokens || 0;
 				tokenStats = {
-					totalTokens: data.history[0].tokens.total_tokens || 0,
+					totalTokens: tot,
+					netTokens: data.history[0].tokens.net_tokens ?? Math.max(0, tot - cached),
 					inputTokens: data.history[0].tokens.input_tokens || 0,
-					cachedTokens: data.history[0].tokens.cached_input_tokens || 0,
+					cachedTokens: cached,
 					outputTokens: data.history[0].tokens.output_tokens || 0,
 					sessionCount: data.history.length,
 					latest: data.history[0].tokens

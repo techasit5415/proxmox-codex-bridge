@@ -176,8 +176,14 @@ def main():
             
     res = query_bridge(provider, prompt_text, args.workspace, sync_mode=args.sync, task_url=args.url)
     base_url = get_base_url(args.url)
+    tok = res.get("tokens") or {}
+    tot_tok = tok.get("total_tokens", 0)
+    cached_tok = tok.get("cached_input_tokens", 0)
+    net_tok = tok.get("net_tokens") if tok.get("net_tokens") is not None else max(0, tot_tok - cached_tok)
     
     print(f"\n[Proxmox Bridge Task Completed | Mode: {res.get('mode', provider)} | Workspace: {res.get('workspace')}]")
+    if tot_tok:
+        print(f"Tokens Used: {net_tok:,} net ({tot_tok:,} total | {cached_tok:,} cached)")
     print(f"Recorded in Dashboard: {base_url}\n")
     
     if provider == "consensus":

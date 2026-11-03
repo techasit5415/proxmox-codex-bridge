@@ -62,22 +62,28 @@ function getSessionTokens() {
 				cachedTokens += (lastUsage.cached_input_tokens || 0);
 				outputTokens += (lastUsage.output_tokens || 0);
 				if (!latest) {
+					const latTotal = lastUsage.total_tokens || 0;
+					const latCached = lastUsage.cached_input_tokens || 0;
 					latest = {
 						workspace: workspace || 'unknown',
-						...lastUsage
+						...lastUsage,
+						net_tokens: Math.max(0, latTotal - latCached)
 					};
 				}
 			}
 		} catch (e) {}
 	}
 
+	const netTokens = Math.max(0, totalTokens - cachedTokens);
+
 	return {
 		totalTokens,
+		netTokens,
 		inputTokens,
 		cachedTokens,
 		outputTokens,
 		sessionCount,
-		latest: latest || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+		latest: latest || { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, net_tokens: 0 }
 	};
 }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { History, RotateCcw } from 'lucide-svelte';
 	import type { TaskRecord } from '../types';
-	import { fmtTokens } from '../types';
+	import { fmtTokens, getNetTokens } from '../types';
 
 	interface Props {
 		history: TaskRecord[];
@@ -157,7 +157,9 @@
 				</div>
 				<div class="flex items-center justify-between font-mono text-[10px] text-zinc-500">
 					<span class="truncate max-w-[100px]">{item.workspace}</span>
-					<span>{fmtTokens(item.tokens?.total_tokens)} tok</span>
+					<span title="Net: {fmtTokens(getNetTokens(item.tokens))} | Total: {fmtTokens(item.tokens?.total_tokens)} | Cached: {fmtTokens(item.tokens?.cached_input_tokens)}">
+						{fmtTokens(getNetTokens(item.tokens))} net
+					</span>
 				</div>
 			</button>
 		{:else}

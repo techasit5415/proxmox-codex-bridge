@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ChevronRight } from 'lucide-svelte';
 	import type { TaskResult } from '../types';
-	import { fmtTokens, extractThoughtAndBody } from '../types';
+	import { fmtTokenBadge, extractThoughtAndBody } from '../types';
 	import ChainOfThought from './ChainOfThought.svelte';
 	import DiffViewer from './DiffViewer.svelte';
 
@@ -27,7 +27,7 @@
 			{/if}
 		</div>
 		{#if result.tokens?.total_tokens}
-			<span class="text-[11px] {isDS ? 'text-violet-300' : 'text-zinc-400'}">{fmtTokens(result.tokens.total_tokens)} tokens</span>
+			<span class="text-[11px] {isDS ? 'text-violet-300' : 'text-emerald-400'}">{fmtTokenBadge(result.tokens)}</span>
 		{/if}
 	</div>
 
