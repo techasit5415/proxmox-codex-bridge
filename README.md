@@ -280,48 +280,55 @@ cp scripts/ask_models.py ~/.gemini/config/ask_models.py
 
 หากต้องการย้ายระบบไปยังเครื่องใหม่ สามารถทำตามขั้นตอนด้านล่างตามกรณีการใช้งาน:
 
-### กรณีที่ 1: ย้าย "เครื่องคอมพิวเตอร์ผู้พัฒนา" (Client PC / Laptop ใหม่)
-*(ตัว Proxmox LXC Container ยังอยู่ที่เดิม IP `192.168.5.159` แต่ต้องการใช้งาน Antigravity จากเครื่องใหม่)*
+### กรณีที่ 1: ย้าย "เครื่องคอมพิวเตอร์ผู้พัฒนา" (Client PC / Laptop ใหม่ไปใช้ Antigravity)
+*(ตัว Proxmox CT ยังรันอยู่ที่เดิม `192.168.5.159:3000` แต่คุณย้ายไปทำงานบนเครื่องใหม่ เช่น คอมพิวเตอร์เครื่องใหม่ หรือลง Windows/macOS ใหม่)*
 
-ทำเพียง 4 สเต็ปบนเครื่องใหม่:
+เมื่อติดตั้ง **Google Antigravity** บนเครื่องใหม่แล้ว ให้ทำเพียง **3 ขั้นตอนสั้นๆ** เพื่อให้ Antigravity บนเครื่องใหม่สามารถสั่งงาน Codex, DeepSeek, และ Consensus ได้ทันที:
 
-#### 1. ตั้งค่า SSH Key ให้เข้า Proxmox โดยไม่ต้องใช้รหัสผ่าน
-เปิด PowerShell หรือ Terminal บนเครื่องใหม่:
-```bash
-# 1.1 สร้าง SSH Key (หากยังไม่มี)
-ssh-keygen -t ed25519
+---
 
-# 1.2 ส่ง Public Key ไปยัง Proxmox CT
-# สำหรับ Windows (PowerShell):
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@192.168.5.159 "cat >> ~/.ssh/authorized_keys"
-
-# สำหรับ macOS / Linux:
-ssh-copy-id root@192.168.5.159
-
-# 1.3 ทดสอบการเชื่อมต่อ (ต้องเข้าได้ทันทีโดยไม่ถามรหัสผ่าน)
-ssh -T root@192.168.5.159 "echo Proxmox Connected OK"
+#### 1. ตรวจสอบการเชื่อมต่อไปยัง Proxmox CT
+เครื่องใหม่ต้องอยู่ในวงแลนเดียวกับ Proxmox หรือเชื่อมต่อผ่าน VPN (เช่น WireGuard, OpenVPN, Tailscale):
+```powershell
+# ทดสอบยิงเช็ค API ของ Bridge Server (ต้องตอบกลับเป็นรายการโมเดล)
+curl.exe -s http://192.168.5.159:3000/api/models
 ```
+*หากเปิดหน้าเว็บ `http://192.168.5.159:3000` บนเบราว์เซอร์ได้ แสดงว่าเครือข่ายพร้อมทำงาน*
 
-#### 2. ใส่การตั้งค่า MCP Server
-สร้างหรือแก้ไขไฟล์ `~/.gemini/config/mcp_config.json`:
-```json
-{
-  "mcpServers": {
-    "proxmox-agent": {
-      "command": "ssh",
-      "args": [
-        "-T",
-        "root@192.168.5.159",
-        "node",
-        "/opt/agent-bridge/server.mjs"
-      ]
-    }
-  }
-}
-```
+---
 
-#### 3. ติดตั้ง Global Anti-Hallucination Rules
-สร้างไฟล์ `~/.gemini/config/rules/proxmox-codex-bridge.md` และคัดลอกไปยัง `~/.gemini/config/AGENTS.md` เพื่อบังคับให้ Antigravity เรียกโมเดลจริงเสมอ:
+#### 2. คัดลอก Permanent Bridge Runner (`ask_models.py`)
+ระบบปัจจุบันใช้ **Permanent Bridge Runner** ยิงผ่าน REST API ความเร็วสูง (ไม่จำเป็นต้องต่อ SSH Pipe หรือแก้ `mcp_config.json` ให้ซับซ้อน):
+
+1. สร้างโฟลเดอร์ config (ถ้ายังไม่มี):
+   ```powershell
+   # Windows (PowerShell)
+   New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.gemini\config"
+   New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.gemini\config\rules"
+   ```
+2. โคลน Repository โค้ดลงเครื่องใหม่:
+   ```bash
+   git clone https://github.com/techasit5415/proxmox-codex-bridge.git
+   ```
+3. คัดลอกสคริปต์ `ask_models.py` ไปไว้ใน Global Config:
+   ```powershell
+   # สำหรับ Windows:
+   Copy-Item "proxmox-codex-bridge\scripts\ask_models.py" "$env:USERPROFILE\.gemini\config\ask_models.py"
+   
+   # สำหรับ macOS / Linux:
+   # cp proxmox-codex-bridge/scripts/ask_models.py ~/.gemini/config/ask_models.py
+   ```
+4. ติดตั้ง Dependency พื้นฐานของ Python:
+   ```bash
+   pip install requests
+   ```
+
+---
+
+#### 3. ติดตั้ง Global Anti-Hallucination & Multi-Agent Rules
+สร้างไฟล์ `~/.gemini/config/rules/proxmox-codex-bridge.md` (และคัดลอกไปยัง `~/.gemini/config/AGENTS.md`) เพื่อให้ Antigravity บนเครื่องใหม่รู้ตัวอัตโนมัติว่าเมื่อใดที่ต้องเรียก Codex หรือ DeepSeek ผ่าน Bridge Tool:
+
+สร้างไฟล์ `$env:USERPROFILE\.gemini\config\rules\proxmox-codex-bridge.md`:
 ```markdown
 # Proxmox Codex Bridge & Multi-Agent Guidelines
 
@@ -329,25 +336,60 @@ ssh -T root@192.168.5.159 "echo Proxmox Connected OK"
 When the user mentions or asks for:
 - "ChatGPT" / "Codex" / "gpt-6.1-sol"
 - "DeepSeek" / "DeepSeek R1"
-- "ทั้ง 3 ตัว" / "3 โมเดล" / "ช่วยกันคิด"
+- "ทั้ง 3 ตัว" / "3 โมเดล" / "ช่วยกันคิด" (referring to ChatGPT, DeepSeek, and Gemini)
 - "เปรียบเทียบ" / "Dual mode" / "run_dual_task"
 
 ### CRITICAL RULES:
 1. NEVER ROLEPLAY OR FABRICATE RESPONSES:
-   - Do NOT simulate or pretend to be ChatGPT or DeepSeek.
-2. ALWAYS USE THE PROXMOX-AGENT MCP SERVER:
-   - To query both models: call `call_mcp_tool` with `ServerName: "proxmox-agent"` and `ToolName: "run_dual_task"`.
-   - To query Codex only: call `run_codex_task`.
-   - To query DeepSeek only: call `run_deepseek_task`.
-3. REPORT REAL LOGS & OUTPUTS from `http://192.168.5.159:3000`.
+   - Do NOT simulate, hallucinate, or pretend to be ChatGPT or DeepSeek.
+   - Do NOT invent a fake roundtable, summit, or mock dialog in place of real model outputs.
+2. EXECUTE DIRECTLY VIA THE PERMANENT BRIDGE TOOL (DO NOT CREATE SCRATCH SCRIPTS):
+   - The bridge runner is already built and ready at `~/.gemini/config/ask_models.py`.
+   - Run via `run_command`:
+     - To run Multi-Agent Consensus Loop (Proposals -> Peer Review -> Harmonization):
+       `python ~/.gemini/config/ask_models.py --consensus "<user prompt>"`
+     - To query both models simultaneously (Dual Mode / Compare):
+       `python ~/.gemini/config/ask_models.py --both "<user prompt>"`
+     - To query Codex only:
+       `python ~/.gemini/config/ask_models.py --codex "<user prompt>"`
+     - To query DeepSeek only:
+       `python ~/.gemini/config/ask_models.py --deepseek "<user prompt>"`
+3. REPORT REAL LOGS & OUTPUTS:
+   - Present the actual responses returned by the Proxmox bridge tool.
+   - Inform the user that the task run is recorded in the dashboard at `http://192.168.5.159:3000`.
 4. HONEST STATUS REPORTING:
-   - If an API or tool call fails or times out, report the exact error honestly.
+   - If an API or tool call fails, times out, or has permission issues, report the exact error honestly to the user instead of substituting fake answers.
 ```
 
-#### 4. โคลน Repository โค้ด
-```bash
-git clone https://github.com/techasit5415/proxmox-codex-bridge.git
+คัดลอกกฎนี้ไปยัง `AGENTS.md` และ `GEMINI.md`:
+```powershell
+Copy-Item "$env:USERPROFILE\.gemini\config\rules\proxmox-codex-bridge.md" "$env:USERPROFILE\.gemini\config\AGENTS.md"
+Copy-Item "$env:USERPROFILE\.gemini\config\rules\proxmox-codex-bridge.md" "$env:USERPROFILE\.gemini\config\GEMINI.md"
 ```
+
+---
+
+#### 4. (ทางเลือก) ตั้งค่า SSH Key หากต้องการเข้าบำรุงรักษาเซิร์ฟเวอร์
+หากคุณเป็น Sysadmin และต้องการสิทธิ์ SSH เข้า Proxmox CT เพื่อดู Log หรือรันคำสั่งโดยตรง:
+```powershell
+# สร้าง SSH Key บนเครื่องใหม่ (ถ้ายังไม่มี)
+ssh-keygen -t ed25519
+
+# ส่ง Public Key ไปยัง Proxmox CT
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@192.168.5.159 "cat >> ~/.ssh/authorized_keys"
+
+# ทดสอบ
+ssh -T root@192.168.5.159 "echo Proxmox Host OK"
+```
+
+---
+
+⚡ **ทดสอบบนเครื่องใหม่:**
+เปิด Terminal บนเครื่องใหม่แล้วพิมพ์ทดสอบได้ทันที:
+```bash
+python ~/.gemini/config/ask_models.py --both "สวัสดี ทดสอบการเชื่อมต่อจากเครื่องใหม่"
+```
+หากได้รับผลลัพธ์ตอบกลับจากทั้ง 2 โมเดล แสดงว่าเครื่องใหม่พร้อมใช้งานร่วมกับ Antigravity เรียบร้อย 100%!
 
 ---
 
