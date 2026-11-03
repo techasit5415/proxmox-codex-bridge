@@ -274,6 +274,13 @@ export async function recoverOrphanedTasks() {
 				if (raw) {
 					try {
 						const job: TaskJobData = JSON.parse(raw);
+						// Safety check: if task's workspace lease is still actively held, do not reap it
+						const lock = await isWorkspaceLocked(job.workspace);
+						if (lock.locked && lock.taskId === taskId) {
+							console.log(`[Redis Job Queue] Task ${taskId} still holds active lease on ${job.workspace}, skipping recovery.`);
+							continue;
+						}
+
 						if (job.status === 'running' || job.status === 'queued') {
 							job.status = 'failed';
 							job.error = 'Task interrupted by bridge restart or container reboot';
@@ -309,8 +316,8 @@ export function startTaskWorker() {
 
 		while (isWorkerRunning) {
 			try {
-				// Atomic queue transition: brpoplpush safely moves taskId from queue to processing list
-				const taskId = await workerClient.brpoplpush('tasks:queue', 'tasks:processing', 3);
+				// Atomic queue transition: BLMOVE (Redis 7) safely moves taskId from queue to processing list
+				const taskId = await (workerClient as any).blmove('tasks:queue', 'tasks:processing', 'RIGHT', 'LEFT', 3);
 				if (!taskId) continue;
 
 				const rawData = await redis.hget(`task:${taskId}`, 'data');
