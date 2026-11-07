@@ -52,36 +52,36 @@
 		color: string;
 	}[] = [
 		{
-			title: 'ให้ทั้ง 3 โมเดลช่วยกันคิด (Consensus)',
-			desc: 'Codex + DeepSeek R1 ต่างคนต่างเสนอไอเดีย สลับกันตรวจ (Peer Review) แล้วสรุปทางออกที่ดีที่สุด',
-			badge: '🏆 Consensus',
+			title: 'วิเคราะห์ร่วม 3 โมเดล (Consensus)',
+			desc: 'Codex และ DeepSeek R1 เสนอแนวทาง สลับกันตรวจ (Peer Review) แล้วสังเคราะห์ทางออกที่ดีที่สุด',
+			badge: 'Consensus',
 			provider: 'consensus',
 			prompt: 'ช่วยออกแบบสถาปัตยกรรมและแนวทางปรับปรุงระบบสำหรับ: ',
-			color: 'border-amber-500/30 bg-amber-950/20 hover:bg-amber-950/35 text-amber-200'
+			color: 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700 text-zinc-200'
 		},
 		{
-			title: 'วิเคราะห์ GitHub Repo อัตโนมัติ',
-			desc: 'วางลิงก์ GitHub เพื่อให้ Proxmox โคลนโค้ดและดึงโครงสร้างไฟล์ส่งให้ทั้ง Codex และ DeepSeek วิเคราะห์',
-			badge: '🐙 Auto-Clone Repo',
+			title: 'วิเคราะห์คลังโค้ด GitHub อัตโนมัติ',
+			desc: 'ระบุลิงก์ GitHub เพื่อให้ระบบโคลนโค้ดและดึงโครงสร้างไฟล์ให้โมเดลตรวจสอบ',
+			badge: 'Clone & Analyze',
 			provider: 'deepseek',
 			prompt: 'ช่วยวิเคราะห์โครงสร้างโปรเจกต์ จุดเด่น และสิ่งที่ควรปรับปรุงของ https://github.com/',
-			color: 'border-cyan-500/30 bg-cyan-950/20 hover:bg-cyan-950/35 text-cyan-200'
+			color: 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700 text-zinc-200'
 		},
 		{
-			title: 'ค้นหาข้อมูลจากเว็บสดด้วย DeepSeek R1',
-			desc: 'ใช้ ReAct Agent Loop สั่งค้นหาเว็บ [TOOL:WEB_SEARCH] และอ่านหน้าเว็บจริงมาสรุปเป็นภาษาไทย',
-			badge: '🌐 Web Search Agent',
+			title: 'สืบค้นข้อมูลจากเว็บสดด้วย DeepSeek R1',
+			desc: 'ใช้งานค้นหาเว็บ [TOOL:WEB_SEARCH] และดึงข้อมูลปัจจุบันมาวิเคราะห์สรุปเป็นภาษาไทย',
+			badge: 'Web Search',
 			provider: 'deepseek',
 			prompt: 'ค้นหาข้อมูลล่าสุดจากอินเทอร์เน็ตเกี่ยวกับ: ',
-			color: 'border-violet-500/30 bg-violet-950/20 hover:bg-violet-950/35 text-violet-200'
+			color: 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700 text-zinc-200'
 		},
 		{
-			title: 'ตรวจโค้ด & หาบั๊กเทียบกัน 2 โมเดล (Dual)',
-			desc: 'รัน Codex และ DeepSeek R1 พร้อมกันใน Git Worktree แยกกันเพื่อเปรียบเทียบการแก้โค้ด',
-			badge: '⚡ Dual Compare',
+			title: 'ตรวจสอบโค้ดและบั๊กแบบ Dual Compare',
+			desc: 'รัน Codex และ DeepSeek R1 พร้อมกันใน Git Worktree แยกกันเพื่อเปรียบเทียบการแก้ไข',
+			badge: 'Dual Compare',
 			provider: 'both',
 			prompt: 'ช่วยตรวจสอบโค้ดในโปรเจกต์นี้ หาช่องโหว่หรือบั๊ก และเสนอแนวทางแก้ไข',
-			color: 'border-indigo-500/30 bg-indigo-950/20 hover:bg-indigo-950/35 text-indigo-200'
+			color: 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700 text-zinc-200'
 		}
 	];
 
