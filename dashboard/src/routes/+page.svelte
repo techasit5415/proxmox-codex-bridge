@@ -9,7 +9,9 @@
 		ConsensusData,
 		TokenStats,
 		AIModelConfig,
-		TaskJobData
+		TaskJobData,
+		ProviderMode,
+		TaskBadgeType
 	} from '../lib/types';
 
 	import Header from '../lib/components/Header.svelte';
@@ -41,10 +43,10 @@
 
 	let prompt = $state<string>('');
 	let branch = $state<string>('');
-	let provider = $state<'codex' | 'deepseek' | 'both' | 'consensus'>('codex');
+	let provider = $state<ProviderMode>('codex');
 	let isExecuting = $state<boolean>(false);
 	let taskBadge = $state<string>('Ready');
-	let taskBadgeType = $state<'idle' | 'running' | 'success' | 'error'>('idle');
+	let taskBadgeType = $state<TaskBadgeType>('idle');
 
 	// Execution outputs
 	let singleResult = $state<TaskResult | null>(null);
@@ -134,7 +136,7 @@
 		}
 	}
 
-	function handleApplyStarter(starterPrompt: string, starterProvider: 'codex' | 'deepseek' | 'both' | 'consensus') {
+	function handleApplyStarter(starterPrompt: string, starterProvider: ProviderMode) {
 		selectedTaskId = null;
 		prompt = starterPrompt;
 		provider = starterProvider;

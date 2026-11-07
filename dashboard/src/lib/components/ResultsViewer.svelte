@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Brain, Search, Copy, Check, FileCode, Download, ShieldCheck, ShieldAlert, Sparkles, Globe, Layers, Code, Clock, ArrowRight } from 'lucide-svelte';
-	import type { TaskResult, WorkspaceDetails, ConsensusData, TestEvidence, TaskRecord } from '../types';
+	import type { TaskResult, WorkspaceDetails, ConsensusData, TestEvidence, TaskRecord, ProviderMode, TaskBadgeType, ResultsActiveTab } from '../types';
 	import { fmtTokens, getNetTokens } from '../types';
 	import DualCompareView from './DualCompareView.svelte';
 	import SingleResultView from './SingleResultView.svelte';
@@ -14,9 +14,9 @@
 		wsDetails: WorkspaceDetails | null;
 		terminalLogs: string;
 		taskBadge: string;
-		taskBadgeType: 'idle' | 'running' | 'success' | 'error';
+		taskBadgeType: TaskBadgeType;
 		recentHistory?: TaskRecord[];
-		onApplyStarter?: (starterPrompt: string, starterProvider: 'codex' | 'deepseek' | 'both' | 'consensus') => void;
+		onApplyStarter?: (starterPrompt: string, starterProvider: ProviderMode) => void;
 		onSelectHistoryTask?: (item: TaskRecord) => void;
 	}
 
@@ -34,7 +34,7 @@
 		onSelectHistoryTask
 	}: Props = $props();
 
-	let activeTab = $state<'thoughts' | 'diff' | 'deepseek_diff' | 'tests' | 'logs' | 'files'>('thoughts');
+	let activeTab = $state<ResultsActiveTab>('thoughts');
 	let activeModelView = $state<'split' | 'codex' | 'deepseek'>('split');
 	let searchQuery = $state<string>('');
 	let logFilter = $state<'all' | 'thoughts' | 'exec' | 'error'>('all');
