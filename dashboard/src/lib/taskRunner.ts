@@ -382,10 +382,10 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			if (fs.existsSync(absF)) {
 				try {
 					await execAsync(`node --check "${absF}"`, { timeout: 10000, env: safeEnv });
-					checkOutputs.push(`✔ Syntax OK: ${f}`);
+					checkOutputs.push(`[OK] Syntax OK: ${f}`);
 				} catch (e: any) {
 					checkPassed = false;
-					checkOutputs.push(`✖ Syntax Error: ${f}\n${e.stderr || e.message}`);
+					checkOutputs.push(`[FAIL] Syntax Error: ${f}\n${e.stderr || e.message}`);
 				}
 			}
 		}
@@ -395,10 +395,10 @@ export async function runTestGate(targetDir: string): Promise<TestEvidence> {
 			if (fs.existsSync(absF)) {
 				try {
 					await execAsync(`python3 -m py_compile "${absF}"`, { timeout: 10000, env: safeEnv });
-					checkOutputs.push(`✔ Syntax OK: ${f}`);
+					checkOutputs.push(`[OK] Syntax OK: ${f}`);
 				} catch (e: any) {
 					checkPassed = false;
-					checkOutputs.push(`✖ Syntax Error: ${f}\n${e.stderr || e.message}`);
+					checkOutputs.push(`[FAIL] Syntax Error: ${f}\n${e.stderr || e.message}`);
 				}
 			}
 		}
@@ -515,7 +515,7 @@ export async function autoCloneGitHubRepoIfNeeded(
 	}
 
 	if (onEvent) {
-		await onEvent({ type: 'stage', stage: `🌐 Auto-Fetching GitHub Repo (${gh.repoFullName})...` });
+		await onEvent({ type: 'stage', stage: `Fetching GitHub repository (${gh.repoFullName})...` });
 	}
 
 	const tmpClone = `/tmp/bridge-autoclone-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -660,7 +660,7 @@ export async function prefetchPromptWebUrls(
 	if (toFetch.length === 0) return '';
 
 	if (onEvent) {
-		await onEvent({ type: 'stage', stage: `🌐 Auto-Fetching ${toFetch.length} Web URL(s) for DeepSeek...` });
+		await onEvent({ type: 'stage', stage: `Fetching ${toFetch.length} web URL(s)...` });
 	}
 
 	const sections: string[] = [];
@@ -1008,7 +1008,7 @@ ${toolInstructions}`;
 		const toolResults: string[] = [];
 		for (const tc of toolCalls) {
 			if (onEvent) {
-				await onEvent({ type: 'stage', stage: `🔍 DeepSeek Agent Tool: ${tc.type} (${tc.arg.slice(0, 45)})...` });
+				await onEvent({ type: 'stage', stage: `Running tool: ${tc.type} (${tc.arg.slice(0, 45)})...` });
 			}
 			let resText = '';
 			if (tc.type === 'READ_FILE') {
@@ -1021,7 +1021,7 @@ ${toolInstructions}`;
 				resText = await fetchWebPageText(tc.arg, 4500);
 			}
 			toolResults.push(`=== RESULT OF [TOOL:${tc.type}] ${tc.arg} ===\n${resText}`);
-			allThinking.push(`🔧 [Executed Tool: ${tc.type} "${tc.arg}"] (${resText.length} chars returned)`);
+			allThinking.push(`[Executed tool: ${tc.type} "${tc.arg}"] (${resText.length} chars returned)`);
 		}
 
 		messages.push({ role: 'assistant', content: step.reply });

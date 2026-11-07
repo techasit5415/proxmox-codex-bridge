@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Play, RefreshCw, Layers, Clock, Plus, Code, GitBranch, FolderGit2, GitMerge, Terminal } from 'lucide-svelte';
+	import { Play, RefreshCw, Layers, Clock, Plus, GitBranch, Folder, GitMerge, X, Terminal } from 'lucide-svelte';
 	import { detectTaskType } from '../types';
 	import type { AIModelConfig } from '../types';
 
@@ -35,14 +35,7 @@
 
 	let activeModels = $derived(models.filter(m => m.active));
 	let projectWorkspaces = $derived(workspaces.filter(w => !w.startsWith('temp-')));
-	let isAutoTemp = $derived(!activeWs || activeWs === 'all' || activeWs === 'auto-temp');
-
-	function getModeHint(mode: string): string {
-		if (mode === 'consensus') return 'Consensus 3 ขั้นตอน: Codex และ DeepSeek ต่างคนต่างคิด → ตรวจสอบไขว้กัน (Peer Review) → สรุปผลลัพธ์ที่ดีที่สุด';
-		if (mode === 'both') return 'Dual Compare: รัน Codex และ DeepSeek พร้อมกันใน Git Worktree แยกกันเพื่อเปรียบเทียบผลลัพธ์';
-		if (mode === 'deepseek') return 'DeepSeek R1 (KMITL GPU): คิดวิเคราะห์เชิงลึก + ค้นเว็บสด + อ่านโค้ดจากลิงก์ GitHub อัตโนมัติ';
-		return 'OpenAI Codex: แก้ไขโค้ด รันคำสั่ง Terminal และสร้าง Git Diff ในโปรเจกต์';
-	}
+	let isWorkspaceActive = $derived(Boolean(activeWs && activeWs !== 'all' && activeWs !== 'auto-temp'));
 
 	function handleKeydown(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -51,72 +44,67 @@
 	}
 </script>
 
-<div class="rounded-xl border border-zinc-800/90 bg-zinc-900/50 p-4 flex flex-col gap-3">
+<div class="rounded-xl border border-zinc-800/90 bg-zinc-900/40 p-3.5 flex flex-col gap-3">
 	{#if selectedTaskId}
-		<div class="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-800/60 border border-zinc-700/60 text-xs">
+		<div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-800/60 border border-zinc-700/60 text-xs">
 			<div class="flex items-center gap-2 text-zinc-300">
 				<Clock class="size-3.5 text-zinc-400 shrink-0" strokeWidth={1.5} />
-				<span>กำลังดูผลลัพธ์จาก History — แก้ไขข้อความเพื่อรันใหม่ หรือกดเริ่มงานใหม่</span>
+				<span>Viewing task from history</span>
 			</div>
 			<button 
 				onclick={onClearSelected}
-				class="px-2.5 py-1 rounded-md bg-zinc-700 hover:bg-zinc-600 text-zinc-200 border border-zinc-600 text-[11px] transition-colors font-medium flex items-center gap-1 cursor-pointer shrink-0"
+				class="px-2 py-0.5 rounded-md bg-zinc-700 hover:bg-zinc-600 text-zinc-200 border border-zinc-600 text-[11px] transition-colors font-medium flex items-center gap-1 cursor-pointer shrink-0"
 			>
 				<Plus class="size-3" strokeWidth={1.5} />
-				<span>เริ่มงานใหม่</span>
+				<span>New task</span>
 			</button>
 		</div>
 	{/if}
 
-	<!-- Top Row: Prompt Label + Target Workspace Pill + Mode Selector -->
+	<!-- Top Row: Prompt Label + Workspace Selector + Provider Segmented Control -->
 	<div class="flex items-center justify-between text-xs flex-wrap gap-2">
 		<div class="flex items-center gap-2 flex-wrap">
-			<span class="font-medium text-zinc-200 text-sm">คำสั่งปฏิบัติการ (Prompt)</span>
+			<span class="font-medium text-zinc-200 text-xs">Prompt</span>
 
-			<!-- Target Workspace Indicator & Quick Switcher -->
-			<div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] border border-zinc-700/80 bg-zinc-800/80 text-zinc-300">
-				{#if isAutoTemp}
-					<Terminal class="size-3 text-zinc-400 shrink-0" strokeWidth={1.5} />
-					<span>Auto Temp (สร้างโฟลเดอร์ใหม่อัตโนมัติ)</span>
-				{:else}
-					<FolderGit2 class="size-3 text-zinc-400 shrink-0" strokeWidth={1.5} />
-					<span>โปรเจกต์: <strong class="font-mono text-zinc-200">{activeWs}</strong></span>
+			<!-- Single Clean Workspace Selector -->
+			{#if isWorkspaceActive}
+				<div class="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-200 border border-zinc-700 text-[11px] font-mono">
+					<Folder class="size-3 text-zinc-400 shrink-0" strokeWidth={1.5} />
+					<span>{activeWs}</span>
 					{#if onSelectWorkspace}
 						<button
 							onclick={() => onSelectWorkspace('all')}
-							title="สลับกลับเป็นโหมด Auto Temp"
-							class="ml-1 px-1.5 py-0.5 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-[10px] cursor-pointer transition-colors"
+							title="Untick workspace (run without workspace)"
+							class="text-zinc-400 hover:text-zinc-100 transition-colors ml-0.5 cursor-pointer"
 						>
-							สลับเป็น Auto Temp
+							<X class="size-3" strokeWidth={1.5} />
 						</button>
 					{/if}
-				{/if}
-
-				{#if onSelectWorkspace && projectWorkspaces.length > 0}
-					<select
-						value={isAutoTemp ? 'all' : activeWs}
-						onchange={(e) => onSelectWorkspace((e.currentTarget as HTMLSelectElement).value)}
-						class="ml-1 bg-zinc-900 text-zinc-300 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono focus:outline-none cursor-pointer"
-						title="เลือกโปรเจกต์ที่จะรันคำสั่งนี้"
-					>
-						<option value="all">Auto Temp (ชั่วคราว)</option>
-						{#each projectWorkspaces as ws}
-							<option value={ws}>{ws}</option>
-						{/each}
-					</select>
-				{/if}
-			</div>
+				</div>
+			{:else if onSelectWorkspace && projectWorkspaces.length > 0}
+				<select
+					value={activeWs}
+					onchange={(e) => onSelectWorkspace((e.currentTarget as HTMLSelectElement).value)}
+					class="bg-zinc-950 hover:bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-700 rounded-md px-2 py-0.5 text-[11px] font-mono focus:outline-none cursor-pointer transition-colors"
+					title="Target workspace"
+				>
+					<option value="all">Workspace: None</option>
+					{#each projectWorkspaces as ws}
+						<option value={ws}>{ws}</option>
+					{/each}
+				</select>
+			{/if}
 
 			{#if prompt.trim()}
 				{@const taskType = detectTaskType(prompt)}
-				<span class="text-[10px] px-2 py-0.5 rounded-md font-mono border border-zinc-700/80 bg-zinc-800/80 text-zinc-300">
+				<span class="text-[10px] px-1.5 py-0.2 rounded font-mono border border-zinc-800 bg-zinc-950 text-zinc-400">
 					{taskType === 'code' ? 'Code' : 'Analysis'}
 				</span>
 			{/if}
 		</div>
 
 		<!-- Segmented Control: Choose Provider -->
-		<div class="flex rounded-lg bg-zinc-950 p-1 border border-zinc-800 text-[11px] font-medium flex-wrap gap-1">
+		<div class="flex rounded-lg bg-zinc-950 p-0.5 border border-zinc-800 text-[11px] font-medium flex-wrap gap-0.5">
 			{#if activeModels.length > 0}
 				{#each activeModels as m}
 					<button 
@@ -131,7 +119,7 @@
 					onclick={() => (provider = 'codex')}
 					class="px-2.5 py-1 rounded-md transition-colors cursor-pointer {provider === 'codex' ? 'bg-zinc-800 text-zinc-100 font-medium border border-zinc-700' : 'text-zinc-400 hover:text-zinc-200'}"
 				>
-					Codex (ChatGPT)
+					Codex
 				</button>
 				<button 
 					onclick={() => (provider = 'deepseek')}
@@ -148,6 +136,7 @@
 				<Layers class="size-3 text-zinc-400" strokeWidth={1.5} />
 				<span>Dual Compare</span>
 			</button>
+
 			<button 
 				onclick={() => (provider = 'consensus')}
 				class="px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer {provider === 'consensus' ? 'bg-zinc-800 text-zinc-100 font-medium border border-zinc-700' : 'text-zinc-400 hover:text-zinc-200'}"
@@ -158,20 +147,16 @@
 		</div>
 	</div>
 
-	<!-- Mode Subtitle / Helper -->
-	<div class="text-[11px] text-zinc-400 bg-zinc-950/60 border border-zinc-800/60 rounded-lg px-3 py-1.5 flex items-center justify-between gap-2">
-		<span>{getModeHint(provider)}</span>
-		<span class="text-[10px] text-zinc-500 font-mono shrink-0 hidden sm:inline">Ctrl+Enter เพื่อรัน</span>
-	</div>
-
+	<!-- Prompt Textarea -->
 	<textarea 
 		bind:value={prompt}
 		onkeydown={handleKeydown}
 		rows="3"
-		placeholder="พิมพ์คำสั่ง คำถาม หรือระบุสิ่งที่ต้องการให้ระบบวิเคราะห์… (Ctrl+Enter เพื่อส่งคำสั่ง)"
+		placeholder="Ask a question, describe a change, or provide instructions... (⌘Enter to run)"
 		class="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 resize-y font-sans placeholder:text-zinc-500 leading-relaxed"
 	></textarea>
 
+	<!-- Bottom Action Bar -->
 	<div class="flex items-center justify-between gap-3 pt-0.5 flex-wrap">
 		<div class="flex items-center gap-2">
 			<button
@@ -187,7 +172,7 @@
 				<input 
 					type="text" 
 					bind:value={branch}
-					placeholder={provider === 'both' ? 'agent/codex-* & agent/deepseek-*' : 'ระบุชื่อ Git Branch'}
+					placeholder={provider === 'both' ? 'agent/codex-* & agent/deepseek-*' : 'git branch name'}
 					class="px-2.5 py-1 bg-zinc-950 border border-zinc-700 rounded-md text-xs font-mono text-zinc-200 focus:outline-none focus:border-zinc-500 placeholder:text-zinc-600 w-56"
 				/>
 			{/if}
@@ -196,18 +181,15 @@
 		<button 
 			onclick={onExecute}
 			disabled={isExecuting || !prompt.trim()}
-			class="h-9 px-5 rounded-lg bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-medium text-xs transition-colors flex items-center gap-2 cursor-pointer shrink-0"
+			class="h-8 px-4 rounded-lg bg-zinc-100 hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-medium text-xs transition-colors flex items-center gap-2 cursor-pointer shrink-0"
 		>
 			{#if isExecuting}
-				<RefreshCw class="size-3.5 animate-spin" strokeWidth={1.5} />
-				<span>
-					{provider === 'consensus' ? 'กำลังรัน Consensus…' : provider === 'both' ? 'กำลังรัน Dual Compare…' : 'กำลังประมวลผล…'}
-				</span>
+				<RefreshCw class="size-3 animate-spin" strokeWidth={1.5} />
+				<span>Executing...</span>
 			{:else}
-				<Play class="size-3.5 fill-current" strokeWidth={1.5} />
-				<span>
-					{provider === 'consensus' ? 'รัน Consensus' : provider === 'both' ? 'รัน Dual Compare' : 'ส่งคำสั่ง (Execute)'}
-				</span>
+				<Play class="size-3 fill-current" strokeWidth={1.5} />
+				<span>Run</span>
+				<kbd class="text-[10px] opacity-60 font-mono">⌘↵</kbd>
 			{/if}
 		</button>
 	</div>

@@ -565,7 +565,7 @@
 <div class="min-h-screen bg-zinc-950 text-zinc-100 antialiased font-sans flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200">
 	<!-- Top Navbar -->
 	<Header 
-		activeWs={activeWs === 'all' || activeWs === 'auto-temp' ? '✨ Auto Temp (ไม่เลือกโปรเจกต์)' : `📁 ${activeWs}`} 
+		activeWs={activeWs === 'all' || activeWs === 'auto-temp' ? 'global' : activeWs} 
 		{status} 
 		{tokenStats} 
 		onOpenSettings={() => (showSettingsModal = true)}

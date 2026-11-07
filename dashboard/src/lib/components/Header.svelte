@@ -57,14 +57,14 @@
 			type="button"
 			onclick={onOpenQueue}
 			class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-colors cursor-pointer {isRedisOnline ? (isBusy ? 'bg-zinc-900 hover:bg-zinc-800 border-amber-500/50 text-amber-200' : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300') : 'bg-rose-950/20 border-rose-900/40 text-rose-300'}"
-			title={isRedisOnline ? `คิวงานสด (คิวรอ ${queueWait} งาน | กำลังรัน ${queueRun} งาน)` : 'Redis Queue Offline'}
+			title={isRedisOnline ? `Job queue: ${queueWait} waiting, ${queueRun} processing` : 'Redis Queue Offline'}
 		>
 			<Layers class="size-3 text-zinc-400" strokeWidth={1.5} />
-			<span>คิว:</span>
+			<span>Queue:</span>
 			{#if isRedisOnline}
-				<strong class="tabular-nums {queueWait > 0 ? 'text-amber-300' : 'text-zinc-200'}">{queueWait} รอ</strong>
+				<strong class="tabular-nums {queueWait > 0 ? 'text-amber-300' : 'text-zinc-200'}">{queueWait} wait</strong>
 				<span class="text-zinc-600">·</span>
-				<strong class="tabular-nums {queueRun > 0 ? 'text-emerald-400' : 'text-zinc-400'}">{queueRun} รัน</strong>
+				<strong class="tabular-nums {queueRun > 0 ? 'text-emerald-400' : 'text-zinc-400'}">{queueRun} run</strong>
 			{:else}
 				<strong class="text-rose-400">Offline</strong>
 			{/if}
@@ -73,10 +73,10 @@
 		<!-- Remaining Disk Space -->
 		<div 
 			class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900/90 border border-zinc-800 text-zinc-300"
-			title="พื้นที่ดิสก์ Workspaces: เหลือว่าง {status?.diskFree || 'N/A'}"
+			title="Free disk space: {status?.diskFree || 'N/A'}"
 		>
 			<HardDrive class="size-3 {diskColorClass} shrink-0" strokeWidth={1.5} />
-			<span class="text-zinc-400">พท.เหลือ:</span>
+			<span class="text-zinc-400">Disk:</span>
 			<strong class="tabular-nums {diskColorClass}">{status?.diskFree || '...'}</strong>
 		</div>
 

@@ -143,10 +143,10 @@
 			content = `# Proxmox Multi-Agent Task Report\n\n` +
 				`- Generated: ${new Date().toLocaleString()}\n` +
 				`- Workspace: ${wsDetails?.name || 'temp'}\n\n` +
-				`## 🛡️ Test Gate Evidence\n` +
-				(test && test.ran ? `- Status: **${test.passed ? 'PASSED (✔)' : 'FAILED (✖)'}**\n- Command: \`${test.testCmd}\`\n\n\`\`\`\n${test.output}\n\`\`\`\n\n` : `_No tests executed._\n\n`) +
-				`## 🌲 Git Changes (Diff)\n\`\`\`diff\n${getCurrentDiff() || '(No changes)'}\n\`\`\`\n\n` +
-				`## 📜 Execution Logs\n\`\`\`\n${getActiveRawLogs()}\n\`\`\`\n`;
+				`## Test Gate Evidence\n` +
+				(test && test.ran ? `- Status: **${test.passed ? 'PASSED' : 'FAILED'}**\n- Command: \`${test.testCmd}\`\n\n\`\`\`\n${test.output}\n\`\`\`\n\n` : `_No tests executed._\n\n`) +
+				`## Git Changes (Diff)\n\`\`\`diff\n${getCurrentDiff() || '(No changes)'}\n\`\`\`\n\n` +
+				`## Execution Logs\n\`\`\`\n${getActiveRawLogs()}\n\`\`\`\n`;
 		}
 
 		const blob = new Blob([content], { type: mime });
@@ -416,23 +416,23 @@
 					{#if recentHistory.length > 0 && onSelectHistoryTask}
 						<div class="flex flex-col gap-2 pt-2 border-t border-zinc-800/80">
 							<div class="flex items-center justify-between text-xs text-zinc-400">
-								<div class="flex items-center gap-1.5 font-semibold text-zinc-300">
-									<Clock class="w-3.5 h-3.5 text-cyan-400" />
-									<span>เปิดดูงานล่าสุด (Recent Runs)</span>
+								<div class="flex items-center gap-1.5 font-medium text-zinc-300">
+									<Clock class="size-3.5 text-zinc-400" strokeWidth={1.5} />
+									<span>Recent runs</span>
 								</div>
-								<span class="text-[11px] text-zinc-500">คลิกเพื่อเปิดดูคำตอบย้อนหลังทันที</span>
+								<span class="text-[11px] text-zinc-500">Click to view previous results</span>
 							</div>
 							<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
 								{#each recentHistory.slice(0, 4) as item}
 									<button
 										onclick={() => onSelectHistoryTask(item)}
-										class="text-left p-2.5 rounded-lg bg-zinc-950/60 hover:bg-zinc-800/60 border border-zinc-800/80 transition flex flex-col gap-1 cursor-pointer"
+										class="text-left p-2.5 rounded-lg bg-zinc-950/60 hover:bg-zinc-800/60 border border-zinc-850 transition-colors flex flex-col gap-1 cursor-pointer"
 									>
 										<div class="flex items-center justify-between text-[10px] font-mono text-zinc-400">
-											<span class="text-cyan-300 font-semibold">
-												{item.mode === 'consensus' ? '🏆 Consensus' : item.mode === 'both' ? '⚡ Dual' : item.provider?.includes('DeepSeek') ? '🧠 DeepSeek R1' : '🤖 Codex'}
+											<span class="text-zinc-200 font-medium">
+												{item.mode === 'consensus' ? 'Consensus' : item.mode === 'both' ? 'Dual' : item.provider?.includes('DeepSeek') ? 'DeepSeek R1' : 'Codex'}
 											</span>
-											<span class="text-emerald-400">{fmtTokens(getNetTokens(item.tokens))} net tok</span>
+											<span class="text-zinc-400">{fmtTokens(getNetTokens(item.tokens))} net tok</span>
 										</div>
 										<div class="text-xs text-zinc-200 truncate font-sans">
 											{item.prompt || '(No prompt)'}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { History, RotateCcw, Search, Plus, RefreshCw, Clock, Layers } from 'lucide-svelte';
+	import { History, RotateCcw, Search, Plus, RefreshCw, Clock, Layers, Folder, Terminal, X } from 'lucide-svelte';
 	import type { TaskRecord, TaskJobData } from '../types';
 	import { fmtTokens, getNetTokens } from '../types';
 
@@ -101,31 +101,31 @@
 
 	function getBadgeInfo(item: TaskRecord) {
 		if (item.mode === 'consensus' || item.provider?.includes('Consensus')) {
-			return { label: '🏆 Consensus', class: 'bg-amber-950/80 text-amber-300 border border-amber-800/80' };
+			return { label: 'Consensus', class: 'bg-zinc-800 text-amber-300 border border-zinc-700' };
 		}
 		if (item.mode === 'both' || item.provider?.includes('Dual')) {
-			return { label: '⚡ Compare', class: 'bg-indigo-950/80 text-indigo-300 border border-indigo-800/80' };
+			return { label: 'Compare', class: 'bg-zinc-800 text-indigo-300 border border-zinc-700' };
 		}
 		if (item.provider?.includes('DeepSeek')) {
-			return { label: '🧠 DeepSeek R1', class: 'bg-violet-950/70 text-violet-300 border border-violet-800/60' };
+			return { label: 'DeepSeek R1', class: 'bg-zinc-800 text-violet-300 border border-zinc-700' };
 		}
-		return { label: '🤖 Codex', class: 'bg-zinc-800 text-emerald-300 border border-zinc-700' };
+		return { label: 'Codex', class: 'bg-zinc-800 text-emerald-300 border border-zinc-700' };
 	}
 
 	function getActiveJobBadge(provider: string) {
 		const p = (provider || '').toLowerCase();
-		if (p.includes('consensus')) return '🏆 Consensus';
-		if (p === 'both' || p.includes('dual')) return '⚡ Compare';
-		if (p.includes('deepseek')) return '🧠 DeepSeek R1';
-		return '🤖 Codex';
+		if (p.includes('consensus')) return 'Consensus';
+		if (p === 'both' || p.includes('dual')) return 'Compare';
+		if (p.includes('deepseek')) return 'DeepSeek R1';
+		return 'Codex';
 	}
 
 	function formatWorkspaceLabel(ws?: string): string {
-		if (!ws || ws === 'auto-temp' || ws === 'temp' || ws === 'all') return '✨ Auto Temp';
+		if (!ws || ws === 'auto-temp' || ws === 'temp' || ws === 'all') return 'Auto Temp';
 		if (ws.startsWith('temp-')) {
-			return '✨ ' + ws.replace(/^temp-/, '').replace(/-[a-z0-9]{4}$/i, '');
+			return ws.replace(/^temp-/, '').replace(/-[a-z0-9]{4}$/i, '');
 		}
-		return '📁 ' + ws;
+		return ws;
 	}
 
 	function formatTime(ts: number): string {
@@ -139,64 +139,69 @@
 </script>
 
 <div class="rounded-xl border border-zinc-800/90 bg-zinc-900/40 p-3 flex flex-col gap-2.5 shadow-sm flex-1 min-h-0">
-	<div class="flex items-center justify-between text-xs">
-		<div class="flex items-center gap-1.5 text-zinc-200 font-semibold overflow-hidden">
-			<History class="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-			<span class="shrink-0">ประวัติงาน (History)</span>
+	<!-- Header -->
+	<div class="flex items-center justify-between text-xs px-0.5">
+		<div class="flex items-center gap-1.5 text-zinc-200 font-medium overflow-hidden">
+			<History class="size-3.5 text-zinc-400 shrink-0" strokeWidth={1.5} />
+			<span class="shrink-0">History</span>
 			{#if activeWs && activeWs !== 'all' && activeWs !== 'auto-temp'}
-				<span class="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono truncate max-w-[85px]" title="กรองตาม: {activeWs}">
-					{activeWs}
-				</span>
-				{#if onClearWorkspaceFilter}
-					<button 
-						onclick={onClearWorkspaceFilter}
-						title="ล้างตัวกรอง Workspace (ดูทั้งหมด)"
-						class="text-[10px] text-zinc-400 hover:text-zinc-100 transition cursor-pointer shrink-0"
-					>✕</button>
-				{/if}
+				<div class="flex items-center gap-1 text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 font-mono truncate max-w-[100px]">
+					<span class="truncate">{activeWs}</span>
+					{#if onClearWorkspaceFilter}
+						<button 
+							onclick={onClearWorkspaceFilter}
+							title="Clear workspace filter"
+							class="text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer shrink-0"
+						>
+							<X class="size-2.5" />
+						</button>
+					{/if}
+				</div>
 			{/if}
-			<span class="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 text-zinc-300 font-mono shrink-0">{filteredHistory.length + filteredActiveJobs.length}</span>
+			<span class="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono shrink-0">
+				{filteredHistory.length + filteredActiveJobs.length}
+			</span>
 		</div>
 
 		<div class="flex items-center gap-1">
 			{#if activeJobs.length > 0 && onOpenQueue}
 				<button
 					onclick={onOpenQueue}
-					class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 transition flex items-center gap-1 cursor-pointer font-mono"
-					title="ดูรายละเอียดคิวงานที่กำลังรันอยู่"
+					class="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 hover:bg-amber-900/60 text-amber-200 border border-amber-800/60 transition-colors flex items-center gap-1 cursor-pointer font-mono"
+					title="View active job queue"
 				>
-					<Layers class="w-2.5 h-2.5 text-amber-400 animate-bounce" />
-					<span>คิว ({activeJobs.length})</span>
+					<Layers class="size-2.5 text-amber-400" strokeWidth={1.5} />
+					<span>Queue ({activeJobs.length})</span>
 				</button>
 			{/if}
 			{#if selectedTaskId && onNewTask}
 				<button
 					onclick={onNewTask}
-					class="text-[10px] px-2 py-0.5 rounded bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 transition flex items-center gap-0.5 cursor-pointer font-medium"
-					title="กลับไปหน้าพิมพ์คำสั่งใหม่"
+					class="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition-colors flex items-center gap-1 cursor-pointer font-medium"
+					title="Start a new task"
 				>
-					<Plus class="w-2.5 h-2.5" />
-					<span>งานใหม่</span>
+					<Plus class="size-2.5" strokeWidth={1.5} />
+					<span>New</span>
 				</button>
 			{/if}
 			<button 
 				onclick={onRefresh}
-				title="รีเฟรชประวัติทันที"
-				class="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition cursor-pointer"
+				title="Refresh history"
+				class="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
 			>
-				<RotateCcw class="w-3 h-3 {isLoading ? 'animate-spin text-cyan-400' : ''}" />
+				<RotateCcw class="size-3 text-zinc-400 {isLoading ? 'animate-spin' : ''}" strokeWidth={1.5} />
 			</button>
 		</div>
 	</div>
 
-	<!-- Search History Input -->
+	<!-- Search Input -->
 	<div class="relative">
-		<Search class="w-3 h-3 absolute left-2.5 top-2 text-zinc-500" />
+		<Search class="size-3 absolute left-2.5 top-2 text-zinc-500" strokeWidth={1.5} />
 		<input
 			type="text"
 			bind:value={searchQuery}
-			placeholder="ค้นหาประวัติแชท หรือคำสั่ง..."
-			class="w-full pl-7 pr-6 py-1 bg-zinc-950/90 border border-zinc-800 rounded-md text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-700 placeholder:text-zinc-600"
+			placeholder="Search history..."
+			class="w-full pl-7 pr-6 py-1 bg-zinc-950 border border-zinc-800 rounded-md text-[11px] text-zinc-200 focus:outline-none focus:border-zinc-700 placeholder:text-zinc-600"
 		/>
 		{#if searchQuery}
 			<button
@@ -206,71 +211,70 @@
 		{/if}
 	</div>
 
-	<!-- Quick Model Filter Pills -->
-	<div class="grid grid-cols-5 gap-0.5 p-0.5 bg-zinc-950/80 rounded-md border border-zinc-800/80 text-[10px] font-mono">
+	<!-- Quick Filter Tabs -->
+	<div class="grid grid-cols-5 gap-0.5 p-0.5 bg-zinc-950 rounded-md border border-zinc-800 text-[10px] font-mono">
 		<button 
 			onclick={() => (historyFilter = 'all')}
-			class="py-0.5 rounded transition text-center cursor-pointer {historyFilter === 'all' ? 'bg-zinc-800 text-zinc-100 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+			class="py-0.5 rounded transition-colors text-center cursor-pointer {historyFilter === 'all' ? 'bg-zinc-800 text-zinc-100 font-medium' : 'text-zinc-500 hover:text-zinc-300'}"
 		>
 			All ({workspaceFilteredHistory.length})
 		</button>
 		<button 
 			onclick={() => (historyFilter = 'codex')}
-			class="py-0.5 rounded transition text-center cursor-pointer {historyFilter === 'codex' ? 'bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700' : 'text-zinc-500 hover:text-zinc-300'}"
+			class="py-0.5 rounded transition-colors text-center cursor-pointer {historyFilter === 'codex' ? 'bg-zinc-800 text-emerald-400 font-medium' : 'text-zinc-500 hover:text-zinc-300'}"
 		>
 			Codex ({countHistory('codex')})
 		</button>
 		<button 
 			onclick={() => (historyFilter = 'deepseek')}
-			class="py-0.5 rounded transition text-center cursor-pointer {historyFilter === 'deepseek' ? 'bg-violet-950 text-violet-300 border border-violet-800 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+			class="py-0.5 rounded transition-colors text-center cursor-pointer {historyFilter === 'deepseek' ? 'bg-zinc-800 text-violet-400 font-medium' : 'text-zinc-500 hover:text-zinc-300'}"
 		>
 			R1 ({countHistory('deepseek')})
 		</button>
 		<button 
 			onclick={() => (historyFilter = 'both')}
-			class="py-0.5 rounded transition text-center cursor-pointer {historyFilter === 'both' ? 'bg-indigo-950 text-indigo-300 border border-indigo-800 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+			class="py-0.5 rounded transition-colors text-center cursor-pointer {historyFilter === 'both' ? 'bg-zinc-800 text-indigo-400 font-medium' : 'text-zinc-500 hover:text-zinc-300'}"
 		>
 			Dual ({countHistory('both')})
 		</button>
 		<button 
 			onclick={() => (historyFilter = 'consensus')}
-			class="py-0.5 rounded transition text-center cursor-pointer {historyFilter === 'consensus' ? 'bg-amber-950 text-amber-300 border border-amber-800 font-semibold' : 'text-zinc-500 hover:text-zinc-300'}"
+			class="py-0.5 rounded transition-colors text-center cursor-pointer {historyFilter === 'consensus' ? 'bg-zinc-800 text-amber-400 font-medium' : 'text-zinc-500 hover:text-zinc-300'}"
 		>
 			Loop ({countHistory('consensus')})
 		</button>
 	</div>
 
+	<!-- History Items List -->
 	<div class="flex flex-col gap-1.5 max-h-[380px] overflow-y-auto pr-0.5">
-		<!-- Live Running / Queued Jobs at the very top of History (0-second delay!) -->
 		{#each filteredActiveJobs as job}
 			<button
 				onclick={() => (job.status === 'running' && onWatchJob ? onWatchJob(job) : onOpenQueue && onOpenQueue())}
-				class="w-full text-left p-2.5 rounded-lg text-xs transition border flex flex-col gap-1 cursor-pointer {job.status === 'running' ? 'bg-emerald-950/35 border-emerald-500/60 hover:bg-emerald-950/50 text-zinc-100' : 'bg-amber-950/25 border-amber-500/50 hover:bg-amber-950/40 text-zinc-200'}"
-				title="คลิกเพื่อดูสถานะสดของงานนี้"
+				class="w-full text-left p-2.5 rounded-lg text-xs transition-colors border flex flex-col gap-1 cursor-pointer {job.status === 'running' ? 'bg-zinc-900 border-emerald-500/50 hover:bg-zinc-850 text-zinc-100' : 'bg-zinc-900 border-amber-500/50 hover:bg-zinc-850 text-zinc-200'}"
 			>
 				<div class="flex items-center justify-between font-mono text-[10px]">
-					<span class="px-1.5 py-0.2 rounded font-semibold flex items-center gap-1 {job.status === 'running' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'}">
+					<span class="px-1.5 py-0.2 rounded font-medium flex items-center gap-1 {job.status === 'running' ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60' : 'bg-amber-950/60 text-amber-300 border border-amber-800/60'}">
 						{#if job.status === 'running'}
-							<RefreshCw class="w-2.5 h-2.5 animate-spin" />
-							<span>กำลังรัน · {getActiveJobBadge(job.provider)}</span>
+							<RefreshCw class="size-2.5 animate-spin" strokeWidth={1.5} />
+							<span>Running · {getActiveJobBadge(job.provider)}</span>
 						{:else}
-							<Clock class="w-2.5 h-2.5" />
-							<span>รอคิว · {getActiveJobBadge(job.provider)}</span>
+							<Clock class="size-2.5" strokeWidth={1.5} />
+							<span>Queued · {getActiveJobBadge(job.provider)}</span>
 						{/if}
 					</span>
-					<span class="text-[10px] text-amber-300 animate-pulse">LIVE</span>
+					<span class="text-[10px] font-mono text-zinc-400">LIVE</span>
 				</div>
 				<div class="text-[11px] line-clamp-2 text-zinc-100 font-sans leading-snug font-medium">
 					{job.prompt || '(No prompt)'}
 				</div>
 				{#if job.stage}
-					<div class="text-[10px] text-emerald-300/90 font-mono truncate">
+					<div class="text-[10px] text-zinc-400 font-mono truncate">
 						{job.stage}
 					</div>
 				{/if}
-				<div class="flex items-center justify-between font-mono text-[10px] text-zinc-400 pt-0.5">
+				<div class="flex items-center justify-between font-mono text-[10px] text-zinc-500 pt-0.5">
 					<span class="truncate max-w-[130px]">{formatWorkspaceLabel(job.workspace)}</span>
-					<span class="text-cyan-300 underline">กดดูสด →</span>
+					<span class="text-zinc-300 hover:underline">View live →</span>
 				</div>
 			</button>
 		{/each}
@@ -279,7 +283,7 @@
 			{@const badge = getBadgeInfo(item)}
 			<button
 				onclick={() => onSelectTask(item)}
-				class="w-full text-left p-2.5 rounded-lg text-xs transition border flex flex-col gap-1 cursor-pointer {selectedTaskId === item.id ? 'bg-indigo-950/40 border-indigo-500/60 text-zinc-100 shadow-xs' : 'bg-zinc-950/50 border-zinc-800/70 text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}"
+				class="w-full text-left p-2.5 rounded-lg text-xs transition-colors border flex flex-col gap-1 cursor-pointer {selectedTaskId === item.id ? 'bg-zinc-800/90 border-zinc-600 text-zinc-100 shadow-xs' : 'bg-zinc-950/40 border-zinc-850 text-zinc-400 hover:bg-zinc-850/50 hover:text-zinc-200'}"
 			>
 				<div class="flex items-center justify-between font-mono text-[10px]">
 					<span class="px-1.5 py-0.2 rounded font-medium {badge.class}">
@@ -292,29 +296,29 @@
 				</div>
 				<div class="flex items-center justify-between font-mono text-[10px] text-zinc-500 pt-0.5">
 					<span class="truncate max-w-[125px]" title={item.workspace}>{formatWorkspaceLabel(item.workspace)}</span>
-					<span class="text-emerald-400/90" title="Net: {fmtTokens(getNetTokens(item.tokens))} | Total: {fmtTokens(item.tokens?.total_tokens)} | Cached: {fmtTokens(item.tokens?.cached_input_tokens)}">
+					<span class="text-zinc-400" title="Net: {fmtTokens(getNetTokens(item.tokens))} | Total: {fmtTokens(item.tokens?.total_tokens)}">
 						{fmtTokens(getNetTokens(item.tokens))} net
 					</span>
 				</div>
 			</button>
 		{:else}
 			{#if filteredActiveJobs.length === 0}
-				<div class="text-[11px] text-zinc-500 italic py-4 text-center flex flex-col items-center gap-1.5">
+				<div class="text-[11px] text-zinc-500 py-6 text-center flex flex-col items-center gap-1.5">
 					<span>
 						{#if searchQuery}
-							ไม่พบประวัติที่ตรงกับ "{searchQuery}"
+							No results for "{searchQuery}"
 						{:else if activeWs && activeWs !== 'all' && activeWs !== 'auto-temp'}
-							ยังไม่มีประวัติรันงานในโปรเจกต์ {activeWs}
+							No history in {activeWs}
 						{:else}
-							ไม่มีประวัติที่ตรงกับตัวกรอง
+							No history items found
 						{/if}
 					</span>
 					{#if activeWs && activeWs !== 'all' && activeWs !== 'auto-temp' && onClearWorkspaceFilter}
 						<button 
 							onclick={onClearWorkspaceFilter}
-							class="text-[11px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 hover:bg-cyan-500/20 cursor-pointer not-italic"
+							class="text-[11px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 hover:bg-zinc-700 cursor-pointer transition-colors"
 						>
-							แสดงประวัติของทุกโปรเจกต์
+							Show all history
 						</button>
 					{/if}
 				</div>
