@@ -50,6 +50,7 @@ export function loadHistorySummaries(limit = 40): TaskRecord[] {
 		status: t.status,
 		mode: t.mode,
 		tokens: t.tokens,
+		attachments: t.attachments,
 		diff: '',
 		logs: ''
 	}));
@@ -85,7 +86,8 @@ export function saveTaskToHistory(task: Omit<TaskRecord, 'id' | 'timestamp' | 'd
 		codex: task.codex,
 		deepseek: task.deepseek,
 		consensus: task.consensus,
-		testEvidence: task.testEvidence
+		testEvidence: task.testEvidence,
+		attachments: task.attachments
 	};
 
 	// Prepend new record

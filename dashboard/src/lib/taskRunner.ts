@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { saveTaskToHistory } from './history';
 import { detectTaskType, extractThoughtAndBody } from './types';
-import type { AIModelConfig, TaskResult, TestEvidence, TaskJobData } from './types';
+import type { AIModelConfig, TaskResult, TestEvidence, TaskJobData, TaskAttachmentMeta } from './types';
 import { getModels } from './models';
 
 const execAsync = util.promisify(exec);
@@ -98,12 +98,21 @@ const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB memory buffer limit
 export function execCodexWithStdin(
 	runDir: string,
 	prompt: string,
-	timeoutMs = 15 * 60 * 1000
+	timeoutMs = 15 * 60 * 1000,
+	imagePaths: string[] = []
 ): Promise<{ stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
+		const args = ['exec', '--dangerously-bypass-approvals-and-sandbox', '-C', runDir];
+		for (const imgPath of imagePaths) {
+			if (imgPath && fs.existsSync(imgPath)) {
+				args.push('-i', imgPath);
+			}
+		}
+		args.push('-');
+
 		const child = spawn(
 			'codex',
-			['exec', '--dangerously-bypass-approvals-and-sandbox', '-C', runDir, '-'],
+			args,
 			{
 				cwd: runDir,
 				env: getSanitizedEnv(),
@@ -846,12 +855,220 @@ export async function callKmitlDeepSeekStream(
 	return { thinking, reply, promptTokens, completionTokens, cachedTokens };
 }
 
+/**
+ * Copies uploaded task attachments into <workspace>/attachments/, extracts full text and
+ * per-page files for PDF/DOCX/text documents, collects image paths for Codex Vision (-i),
+ * and commits attachments/ so isolated Git worktrees inherit them automatically.
+ */
+export async function processWorkspaceAttachments(
+	target: string,
+	attachments?: TaskAttachmentMeta[],
+	onEvent?: (event: Record<string, any>) => Promise<void>
+): Promise<{
+	hasAttachments: boolean;
+	attachmentContext: string;
+	imageRelPaths: string[];
+}> {
+	if (!attachments || attachments.length === 0) {
+		return { hasAttachments: false, attachmentContext: '', imageRelPaths: [] };
+	}
+
+	if (onEvent) {
+		await onEvent({
+			type: 'stage',
+			stage: `Preparing ${attachments.length} attached file(s) for Codex & DeepSeek inspection...`
+		});
+	}
+
+	const attachDir = path.join(target, 'attachments');
+	fs.mkdirSync(attachDir, { recursive: true });
+
+	const sections: string[] = [];
+	const imageRelPaths: string[] = [];
+
+	const pyExtractorScript = `
+import sys, os, re, subprocess, zipfile
+import xml.etree.ElementTree as ET
+
+src_path = sys.argv[1]
+pages_dir = sys.argv[2]
+extracted_txt_path = sys.argv[3]
+ext = os.path.splitext(src_path)[1].lower()
+fname = os.path.basename(src_path)
+
+if ext == '.pdf':
+    os.makedirs(pages_dir, exist_ok=True)
+    pages_text = []
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(src_path)
+        total_pages = len(reader.pages)
+    except Exception:
+        total_pages = 0
+
+    if total_pages == 0:
+        try:
+            out = subprocess.check_output(['pdfinfo', src_path], text=True, stderr=subprocess.DEVNULL)
+            m = re.search(r'Pages:\\s+(\\d+)', out)
+            if m:
+                total_pages = int(m.group(1))
+        except Exception:
+            pass
+
+    for p in range(1, total_pages + 1):
+        txt = ""
+        try:
+            txt = subprocess.check_output(
+                ['pdftotext', '-layout', '-f', str(p), '-l', str(p), src_path, '-'],
+                text=True,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+        if not txt.strip():
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(src_path)
+                txt = reader.pages[p - 1].extract_text() or ""
+            except Exception:
+                pass
+        txt = txt.replace('\\x0c', '').strip()
+        pages_text.append((p, txt))
+        page_file = os.path.join(pages_dir, f"page_{p:03d}.txt")
+        with open(page_file, 'w', encoding='utf-8') as pf:
+            pf.write(f"=== [{fname} — หน้า {p} / {total_pages}] ===\\n{txt}\\n")
+
+    full_blocks = []
+    index_lines = []
+    caption_re = re.compile(r'(บทที่\\s*\\d+|รูปที่\\s*[\\d.]+|ภาพที่\\s*[\\d.]+|ตารางที่\\s*[\\d.]+|Figure\\s*[\\d.]+|Table\\s*[\\d.]+|^\\s*\\d+\\.\\d+(?:\\.\\d+)?\\s+\\S+)', re.IGNORECASE | re.MULTILINE)
+
+    for p, txt in pages_text:
+        full_blocks.append(f"=== [หน้า {p} / {total_pages} (Page {p} of {total_pages})] ===\\n{txt}")
+        for line in txt.splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            if caption_re.search(s) and len(s) <= 180:
+                index_lines.append(f"  - [หน้า {p}] {s}")
+
+    full_text = "\\n\\n".join(full_blocks)
+    with open(extracted_txt_path, 'w', encoding='utf-8') as ef:
+        ef.write(full_text)
+
+    rel_pages_dir = f"attachments/{os.path.basename(pages_dir)}"
+    rel_extracted = f"attachments/{os.path.basename(extracted_txt_path)}"
+    print(f"FILE: attachments/{fname} (PDF Document, {total_pages} pages, {len(full_text):,} chars)")
+    print(f"FULL EXTRACTED TEXT FILE: {rel_extracted}")
+    print(f"PER-PAGE TEXT FILES: {rel_pages_dir}/page_001.txt .. page_{total_pages:03d}.txt")
+
+    if index_lines:
+        print(f"\\n--- [INDEX OF HEADINGS, FIGURES & TABLES ACROSS ALL {total_pages} PAGES] ---")
+        print("\\n".join(index_lines[:150]))
+
+    if len(full_text) <= 11500:
+        print(f"\\n--- [COMPLETE EXTRACTED TEXT OF ALL {total_pages} PAGES] ---")
+        print(full_text)
+    else:
+        print(f"\\n--- [PAGE-BY-PAGE OVERVIEW OF ALL {total_pages} PAGES (Read {rel_pages_dir}/page_XXX.txt or {rel_extracted} for full unabridged page text)] ---")
+        per_page_budget = max(220, min(600, 10500 // max(1, total_pages)))
+        for p, txt in pages_text:
+            clean_lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+            preview = " | ".join(clean_lines)[:per_page_budget]
+            print(f"[หน้า {p}/{total_pages}]: {preview}")
+
+elif ext == '.docx':
+    paragraphs = []
+    try:
+        with zipfile.ZipFile(src_path) as zf:
+            xml_content = zf.read('word/document.xml')
+        tree = ET.fromstring(xml_content)
+        for elem in tree.iter():
+            if elem.tag.endswith('}p'):
+                texts = [t.text for t in elem.iter() if t.tag.endswith('}t') and t.text]
+                if texts:
+                    paragraphs.append("".join(texts))
+    except Exception as e:
+        paragraphs.append(f"[DOCX extraction error: {e}]")
+    full_text = "\\n".join(paragraphs)
+    with open(extracted_txt_path, 'w', encoding='utf-8') as ef:
+        ef.write(full_text)
+    print(f"FILE: attachments/{fname} (Word DOCX, {len(full_text):,} chars)")
+    print(f"FULL EXTRACTED TEXT FILE: attachments/{os.path.basename(extracted_txt_path)}")
+    print(full_text[:11500])
+`;
+
+	for (const att of attachments) {
+		if (!att.stagedPath || !fs.existsSync(att.stagedPath)) continue;
+		const destPath = path.join(attachDir, att.safeName);
+		fs.copyFileSync(att.stagedPath, destPath);
+		const ext = path.extname(att.safeName).toLowerCase();
+
+		if (ext === '.pdf' || ext === '.docx') {
+			const pagesDir = path.join(attachDir, `${att.safeName}_pages`);
+			const extractedTxtPath = path.join(attachDir, `${att.safeName}.extracted.txt`);
+			const extractedSummary = await new Promise<string>((resolve) => {
+				const child = spawn(
+					'python3',
+					['-c', pyExtractorScript, destPath, pagesDir, extractedTxtPath],
+					{ cwd: target, env: getSanitizedEnv(), shell: false }
+				);
+				let out = '';
+				child.stdout?.on('data', (d) => { out += d.toString(); });
+				child.stderr?.on('data', (d) => { out += d.toString(); });
+				child.on('close', () => resolve(out.trim()));
+				child.on('error', (err) => resolve(`[Extractor error for ${att.safeName}: ${err.message}]`));
+			});
+			sections.push(extractedSummary);
+		} else if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) {
+			const relImg = `attachments/${att.safeName}`;
+			imageRelPaths.push(relImg);
+			let imgInfo = `${att.safeName} (${Math.round(att.size / 1024)} KB)`;
+			try {
+				const { stdout } = await execAsync(
+					`python3 -c "from PIL import Image; im=Image.open('${destPath.replace(/'/g, "\\'")}'); print(f'{im.format} {im.size[0]}x{im.size[1]} {im.mode}')"`,
+					{ cwd: target, env: getSanitizedEnv() }
+				);
+				if (stdout.trim()) imgInfo += ` [${stdout.trim()}]`;
+			} catch {}
+			sections.push(`IMAGE ATTACHMENT: ${relImg} — ${imgInfo} (Attached directly to Codex Vision via -i)`);
+		} else {
+			// Plain text / code / markdown / CSV / JSON / LaTeX / etc.
+			try {
+				const rawText = fs.readFileSync(destPath, 'utf8');
+				sections.push(
+					`FILE ATTACHMENT: attachments/${att.safeName} (${rawText.length.toLocaleString()} chars)\n` +
+					`--- CONTENT OF attachments/${att.safeName} ---\n` +
+					sanitizeForApi(rawText, 11500)
+				);
+			} catch {
+				sections.push(`BINARY ATTACHMENT: attachments/${att.safeName} (${Math.round(att.size / 1024)} KB)`);
+			}
+		}
+	}
+
+	// Commit attachments/ into workspace Git repo so isolated worktrees (Dual/Consensus) inherit them cleanly!
+	try {
+		await execAsync('git add attachments && git commit -m "chore: stage uploaded attachments for multi-agent review"', {
+			cwd: target,
+			env: getSanitizedEnv()
+		});
+	} catch {}
+
+	return {
+		hasAttachments: sections.length > 0 || imageRelPaths.length > 0,
+		attachmentContext: sections.join('\n\n========================================\n\n'),
+		imageRelPaths
+	};
+}
+
 export async function runCodexTask(
 	target: string,
 	prompt: string,
 	branchName: string,
 	cwdOverride?: string,
-	hasClonedRepo = false
+	hasClonedRepo = false,
+	attachmentContext = '',
+	imageRelPaths: string[] = []
 ): Promise<TaskResult> {
 	const runDir = cwdOverride || target;
 	if (!cwdOverride) {
@@ -861,18 +1078,25 @@ export async function runCodexTask(
 	}
 
 	const taskType = detectTaskType(prompt);
-	const repoAvailable = hasClonedRepo || !isScratchWorkspace(runDir);
+	const hasAttachedFiles = Boolean(attachmentContext || imageRelPaths.length > 0);
+	const repoAvailable = hasClonedRepo || hasAttachedFiles || !isScratchWorkspace(runDir);
+
+	const attachmentBlock = attachmentContext
+		? `\n\n=== REAL UPLOADED FILES & EXTRACTED DOCUMENT CONTENT (IN ${runDir}/attachments/) ===
+Note: The user uploaded real file(s) for you to inspect. The extracted content and index are shown below, and the full unabridged files (including per-page text files \`attachments/*_pages/page_XXX.txt\` and \`attachments/*.extracted.txt\`) are right here in \`${runDir}/attachments/\`. You may read specific page files in \`attachments/\` if you need deeper page-level detail.
+${attachmentContext}\n`
+		: '';
 
 	let effectivePrompt = prompt;
 	if (taskType === 'general') {
 		if (repoAvailable) {
-			effectivePrompt = `[TASK TYPE: REPOSITORY ANALYSIS / ADVISORY CONSULTATION]
-Note: The target repository is ALREADY cloned directly in your current working directory (${runDir}).
+			effectivePrompt = `[TASK TYPE: DOCUMENT & REPOSITORY ANALYSIS / ADVISORY CONSULTATION]
+Note: The target files and/or uploaded attachments are ALREADY present directly in your current working directory (${runDir}).
 TOKEN-SAVING RULES:
 1. Do NOT run \`git clone\` into /tmp — the files are already right here in ${runDir}.
-2. Read files selectively (e.g. README.md and key modules) without dumping entire huge files into stdout unnecessarily.
+2. If uploaded attachments are provided below (or in \`attachments/\`), base your review and analysis directly on the real uploaded files and extracted pages.
 3. Do NOT modify or create any files unless the user explicitly asked to edit files. Respond comprehensively in the requested language (e.g. Thai).
-
+${attachmentBlock}
 User Question:
 ${prompt}`;
 		} else {
@@ -885,12 +1109,14 @@ User Question:
 ${prompt}`;
 		}
 	} else if (repoAvailable) {
-		effectivePrompt = `[Workspace Note: The target repository files are already present in your working directory (${runDir}). Do NOT clone into /tmp.]\n\n${prompt}`;
+		effectivePrompt = `[Workspace Note: The target repository files and any uploaded attachments (\`attachments/\`) are already present in your working directory (${runDir}). Do NOT clone into /tmp.]${attachmentBlock}\n\n${prompt}`;
 	}
+
+	const absImagePaths = imageRelPaths.map(rel => path.join(runDir, rel));
 
 	let stdout = '';
 	let stderr = '';
-	const res = await execCodexWithStdin(runDir, effectivePrompt, 15 * 60 * 1000);
+	const res = await execCodexWithStdin(runDir, effectivePrompt, 15 * 60 * 1000, absImagePaths);
 	stdout = res.stdout;
 	stderr = res.stderr;
 	const { stdout: diff } = await execAsync('git diff', { cwd: runDir });
@@ -913,7 +1139,8 @@ export async function runDeepSeekTask(
 	branchName: string,
 	cwdOverride?: string,
 	preFetchedWebContext = '',
-	onEvent?: (event: Record<string, any>) => Promise<void>
+	onEvent?: (event: Record<string, any>) => Promise<void>,
+	attachmentContext = ''
 ): Promise<TaskResult> {
 	const runDir = cwdOverride || target;
 	if (!cwdOverride) {
@@ -923,27 +1150,27 @@ export async function runDeepSeekTask(
 	}
 
 	const taskType = detectTaskType(prompt);
-	const workspaceSnapshot = await buildWorkspaceSnapshot(runDir, 10000);
+	const workspaceSnapshot = await buildWorkspaceSnapshot(runDir, attachmentContext ? 4000 : 10000);
 
 	const toolInstructions = `
 === AGENTIC TOOLS AVAILABLE (EXECUTED BY PROXMOX BRIDGE) ===
-You have live access to the workspace files and the internet via the Proxmox Bridge!
-If the provided Workspace Snapshot or Pre-Fetched Web Content below is not enough and you need to inspect additional files or search the internet before answering, output one or more tool commands on their own line:
-- To read a specific file in the workspace:
-  [TOOL:READ_FILE] path/to/file.ext
+You have live access to the workspace files (including uploaded files & per-page PDF extractions in \`attachments/\`) and the internet via the Proxmox Bridge!
+If the provided Attached Document Content, Workspace Snapshot, or Pre-Fetched Web Content below is not enough and you need to inspect specific pages (e.g. \`attachments/<filename>_pages/page_018.txt\`) or search the internet before answering, output one or more tool commands on their own line:
+- To read a specific file or extracted PDF page in the workspace:
+  [TOOL:READ_FILE] attachments/example.pdf_pages/page_001.txt
 - To list files in a subdirectory:
-  [TOOL:LIST_FILES] path/to/dir
+  [TOOL:LIST_FILES] attachments
 - To search the internet (DuckDuckGo):
   [TOOL:WEB_SEARCH] your search query
 - To fetch a specific web page URL:
   [TOOL:FETCH_URL] https://example.com/page
 
-If you already have enough information in the Workspace Snapshot and Pre-Fetched Web Content below, answer the user's request directly and thoroughly without outputting [TOOL:...] lines.`;
+If you already have enough information in the Attached Document Content, Workspace Snapshot, and Pre-Fetched Web Content below, answer the user's request directly and thoroughly without outputting [TOOL:...] lines.`;
 
 	const systemPrompt = taskType === 'general'
-		? `You are an expert AI Software Architect, Advisor, and Analyst running on the Proxmox Multi-Agent Bridge.
+		? `You are an expert AI Software Architect, Document Auditor, Advisor, and Analyst running on the Proxmox Multi-Agent Bridge.
 Provide a clear, accurate, evidence-based, and comprehensive response in the requested language (e.g. Thai).
-Base your analysis strictly on the real Workspace Snapshot, Pre-Fetched Web Content, and any Tool results. Never guess or hallucinate repository contents.
+Base your analysis strictly on the real Attached Document Content, Workspace Snapshot, Pre-Fetched Web Content, and any Tool results. Never guess or hallucinate contents.
 Do NOT output file: blocks or modify files unless explicitly asked to write files.
 ${toolInstructions}`
 		: `You are an expert software engineer running on the Proxmox Multi-Agent Bridge. Given a user task and workspace files, generate the necessary code changes.
@@ -958,6 +1185,9 @@ Do not output git diff markers directly, just output the complete file contents 
 ${toolInstructions}`;
 
 	const contextSections: string[] = [];
+	if (attachmentContext) {
+		contextSections.push(`=== REAL UPLOADED FILES & EXTRACTED DOCUMENT CONTENT ===\n${attachmentContext}`);
+	}
 	if (workspaceSnapshot && workspaceSnapshot !== '(Empty workspace)') {
 		contextSections.push(workspaceSnapshot);
 	}
@@ -1275,6 +1505,14 @@ export async function executeTaskPipeline(
 	const timestamp = Date.now();
 	if (onEvent) await onEvent({ type: 'status', status: 'running', workspace: activeWorkspace });
 
+	// Process & Extract any uploaded files (PDF, DOCX, Images, Code/Text) into <target>/attachments/
+	const processedAtt = await processWorkspaceAttachments(target, job.attachments, onEvent);
+	const attachmentSummaryMeta = job.attachments?.map(a => ({
+		name: a.name,
+		size: a.size,
+		mimeType: a.mimeType
+	}));
+
 	// Pre-Fetcher: Auto-clone GitHub repository if prompt contains a GitHub repo URL in a scratch workspace
 	const clonedRepo = await autoCloneGitHubRepoIfNeeded(target, prompt, onEvent);
 	// Pre-Fetcher: Auto-fetch any external web URLs for DeepSeek context
@@ -1286,7 +1524,15 @@ export async function executeTaskPipeline(
 	if (provider === 'deepseek') {
 		const taskBranch = branch?.trim() || `agent/deepseek-${timestamp}`;
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Executing DeepSeek R1 (14b GPU + ReAct Web/File Agent)...' });
-		const result = await runDeepSeekTask(target, prompt, taskBranch, undefined, preFetchedWebContext, onEvent);
+		const result = await runDeepSeekTask(
+			target,
+			prompt,
+			taskBranch,
+			undefined,
+			preFetchedWebContext,
+			onEvent,
+			processedAtt.attachmentContext
+		);
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Running Evidence Test Gate...' });
 		const testEvidence = await runTestGate(target);
@@ -1303,9 +1549,10 @@ export async function executeTaskPipeline(
 			logs: result.logs,
 			tokens: result.tokens,
 			mode: 'single',
-			testEvidence
+			testEvidence,
+			attachments: attachmentSummaryMeta
 		});
-		return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
+		return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence, attachments: attachmentSummaryMeta };
 	}
 
 	// Dual Mode (Worktrees)
@@ -1328,7 +1575,8 @@ export async function executeTaskPipeline(
 				deepseekBranch,
 				deepseekWorktree.worktreePath,
 				preFetchedWebContext,
-				onEvent
+				onEvent,
+				processedAtt.attachmentContext
 			).catch(err => ({
 				provider: 'DeepSeek R1 (14b GPU)',
 				branch: deepseekBranch,
@@ -1338,7 +1586,15 @@ export async function executeTaskPipeline(
 				tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, net_tokens: 0 }
 			}));
 
-			codexRes = await runCodexTask(target, prompt, codexBranch, codexWorktree.worktreePath, clonedRepo.cloned);
+			codexRes = await runCodexTask(
+				target,
+				prompt,
+				codexBranch,
+				codexWorktree.worktreePath,
+				clonedRepo.cloned,
+				processedAtt.attachmentContext,
+				processedAtt.imageRelPaths
+			);
 			deepseekRes = await deepseekPromise;
 		} finally {
 			await cleanupWorktree(target, codexWorktree, `Codex: ${prompt.slice(0, 50)}`);
@@ -1371,7 +1627,8 @@ export async function executeTaskPipeline(
 			mode: 'both',
 			codex: codexRes,
 			deepseek: deepseekRes,
-			testEvidence
+			testEvidence,
+			attachments: attachmentSummaryMeta
 		});
 
 		return {
@@ -1382,7 +1639,8 @@ export async function executeTaskPipeline(
 			codex: codexRes,
 			deepseek: deepseekRes,
 			tokens: combinedTokens,
-			testEvidence
+			testEvidence,
+			attachments: attachmentSummaryMeta
 		};
 	}
 
@@ -1407,7 +1665,8 @@ export async function executeTaskPipeline(
 				deepseekPropBranch,
 				deepseekWorktree.worktreePath,
 				preFetchedWebContext,
-				onEvent
+				onEvent,
+				processedAtt.attachmentContext
 			).catch(err => ({
 				provider: 'DeepSeek R1 (14b GPU)',
 				branch: deepseekPropBranch,
@@ -1417,7 +1676,15 @@ export async function executeTaskPipeline(
 				tokens: { total_tokens: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, net_tokens: 0 }
 			}));
 
-			codexProp = await runCodexTask(target, prompt, codexPropBranch, codexWorktree.worktreePath, clonedRepo.cloned);
+			codexProp = await runCodexTask(
+				target,
+				prompt,
+				codexPropBranch,
+				codexWorktree.worktreePath,
+				clonedRepo.cloned,
+				processedAtt.attachmentContext,
+				processedAtt.imageRelPaths
+			);
 			deepseekProp = await deepseekPromise;
 		} finally {
 			await cleanupWorktree(target, codexWorktree, `Proposal Codex: ${prompt.slice(0, 50)}`);
@@ -1427,13 +1694,16 @@ export async function executeTaskPipeline(
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 2: Bilateral Cross-Review (Streaming)...' });
 		const cleanCodexPropBody = extractThoughtAndBody(codexProp.logs || '').body || codexProp.logs || '';
 		const cleanDeepseekPropBody = extractThoughtAndBody(deepseekProp.logs || '').body || deepseekProp.logs || '';
+		const reviewAttachmentRef = processedAtt.attachmentContext
+			? `\n=== ATTACHED DOCUMENT REFERENCE (EXCERPT) ===\n${sanitizeForApi(processedAtt.attachmentContext, 4000)}\n`
+			: '';
 
 		const deepseekReviewPrompt = `[TASK TYPE: GENERAL CONSULTATION / PEER REVIEW AUDIT]
 You are a Principal Software Architect & Auditor conducting a peer review of a solution proposed by OpenAI Codex for the following task.
 
 === ORIGINAL TASK ===
 ${prompt}
-
+${reviewAttachmentRef}
 === OPENAI CODEX PROPOSAL & OUTPUT ===
 ${sanitizeForApi(cleanCodexPropBody, 4500)}
 
@@ -1451,7 +1721,7 @@ IMPORTANT TOKEN-SAVING RULE: Do NOT execute any shell commands (no rg, no cat, n
 
 === ORIGINAL TASK ===
 ${prompt}
-
+${reviewAttachmentRef}
 === DEEPSEEK R1 PROPOSAL & OUTPUT ===
 ${sanitizeForApi(cleanDeepseekPropBody, 5000)}
 
@@ -1512,7 +1782,7 @@ We have executed a multi-agent debate and peer review between OpenAI Codex and D
 
 === ORIGINAL TASK ===
 ${prompt}
-
+${reviewAttachmentRef}
 === PROPOSAL A (Codex) ===
 ${cleanCodexPropBody.slice(0, 4500)}
 Diff: ${sanitizeForApi(codexProp.diff || 'none', 2500)}
@@ -1533,7 +1803,15 @@ ${mandateRules}`;
 			await execAsync(`git checkout -b ${consensusBranch}`, { cwd: target });
 		} catch (e) {}
 
-		const finalSolution = await runCodexTask(target, consensusPrompt, consensusBranch, undefined, clonedRepo.cloned);
+		const finalSolution = await runCodexTask(
+			target,
+			consensusPrompt,
+			consensusBranch,
+			undefined,
+			clonedRepo.cloned,
+			'',
+			processedAtt.imageRelPaths
+		);
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Stage 4: Automated Evidence Test Gate...' });
 		const testEvidence = await runTestGate(target);
@@ -1588,7 +1866,8 @@ ${mandateRules}`;
 			},
 			mode: 'consensus',
 			consensus: consensusData,
-			testEvidence
+			testEvidence,
+			attachments: attachmentSummaryMeta
 		});
 
 		return {
@@ -1602,6 +1881,7 @@ ${mandateRules}`;
 			diff: finalSolution.diff,
 			logs: finalSolution.logs,
 			testEvidence,
+			attachments: attachmentSummaryMeta,
 			tokens: {
 				total_tokens: totalTokens,
 				input_tokens: inputTokens,
@@ -1618,7 +1898,10 @@ ${mandateRules}`;
 	if (matchedModel && !matchedModel.isBuiltin) {
 		const taskBranch = branch?.trim() || `agent/${matchedModel.id}-${timestamp}`;
 		if (onEvent) await onEvent({ type: 'stage', stage: `Executing ${matchedModel.name}...` });
-		const result = await runCustomModelTask(matchedModel, target, prompt, taskBranch);
+		const customPrompt = processedAtt.attachmentContext
+			? `${prompt}\n\n=== ATTACHED FILES ===\n${processedAtt.attachmentContext}`
+			: prompt;
+		const result = await runCustomModelTask(matchedModel, target, customPrompt, taskBranch);
 
 		if (onEvent) await onEvent({ type: 'stage', stage: 'Running Evidence Test Gate...' });
 		const testEvidence = await runTestGate(target);
@@ -1635,15 +1918,24 @@ ${mandateRules}`;
 			logs: result.logs,
 			tokens: result.tokens,
 			mode: 'single',
-			testEvidence
+			testEvidence,
+			attachments: attachmentSummaryMeta
 		});
-		return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
+		return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence, attachments: attachmentSummaryMeta };
 	}
 
 	// Default: Codex Only
 	const taskBranch = branch?.trim() || `agent/codex-${timestamp}`;
 	if (onEvent) await onEvent({ type: 'stage', stage: 'Executing OpenAI Codex (gpt-6.1-sol)...' });
-	const result = await runCodexTask(target, prompt, taskBranch, undefined, clonedRepo.cloned);
+	const result = await runCodexTask(
+		target,
+		prompt,
+		taskBranch,
+		undefined,
+		clonedRepo.cloned,
+		processedAtt.attachmentContext,
+		processedAtt.imageRelPaths
+	);
 
 	if (onEvent) await onEvent({ type: 'stage', stage: 'Running Evidence Test Gate...' });
 	const testEvidence = await runTestGate(target);
@@ -1660,8 +1952,9 @@ ${mandateRules}`;
 		logs: result.logs,
 		tokens: result.tokens,
 		mode: 'single',
-		testEvidence
+		testEvidence,
+		attachments: attachmentSummaryMeta
 	});
 
-	return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence };
+	return { success: true, id: job.id, workspace: activeWorkspace, mode: 'single', ...result, testEvidence, attachments: attachmentSummaryMeta };
 }

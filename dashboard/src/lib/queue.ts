@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
 import fs from 'fs';
 import path from 'path';
-import type { TaskJobData, TaskJobStatus, TaskRecord } from './types';
+import type { TaskJobData, TaskJobStatus, TaskRecord, TaskAttachmentInput, TaskAttachmentMeta } from './types';
 import { executeTaskPipeline } from './taskRunner';
 
 const REDIS_HOST = process.env.REDIS_HOST || '127.0.0.1';
@@ -184,20 +184,74 @@ export async function publishTaskEvent(taskId: string, event: Record<string, any
 	}
 }
 
+const UPLOADS_BASE_DIR = fs.existsSync('/opt/agent-bridge')
+	? '/opt/agent-bridge/uploads'
+	: path.resolve('uploads');
+
+export function stageUploadedAttachments(
+	taskId: string,
+	attachments?: TaskAttachmentInput[]
+): TaskAttachmentMeta[] {
+	if (!attachments || !Array.isArray(attachments) || attachments.length === 0) {
+		return [];
+	}
+
+	const taskUploadDir = path.join(UPLOADS_BASE_DIR, taskId);
+	fs.mkdirSync(taskUploadDir, { recursive: true });
+
+	const staged: TaskAttachmentMeta[] = [];
+	const usedNames = new Set<string>();
+
+	for (const item of attachments.slice(0, 15)) {
+		if (!item || !item.name || !item.contentBase64) continue;
+		const rawBase = path.basename(item.name).replace(/[\x00-\x1f/\\:*?"<>|]+/g, '_').trim() || 'attachment.bin';
+		let safeName = rawBase;
+		let counter = 1;
+		while (usedNames.has(safeName)) {
+			const ext = path.extname(rawBase);
+			const stem = path.basename(rawBase, ext);
+			safeName = `${stem}_${counter}${ext}`;
+			counter++;
+		}
+		usedNames.add(safeName);
+
+		// Strip optional data URI prefix e.g. "data:application/pdf;base64,"
+		const cleanB64 = item.contentBase64.includes(',')
+			? item.contentBase64.split(',').pop() || ''
+			: item.contentBase64;
+		const buf = Buffer.from(cleanB64, 'base64');
+		const stagedPath = path.join(taskUploadDir, safeName);
+		fs.writeFileSync(stagedPath, buf);
+
+		staged.push({
+			name: item.name,
+			safeName,
+			mimeType: item.mimeType || '',
+			size: buf.length,
+			stagedPath
+		});
+	}
+
+	return staged;
+}
+
 // Enqueue Task into Redis
 export async function enqueueTask(data: {
 	workspace: string;
 	prompt: string;
 	provider: string;
 	branch?: string;
+	attachments?: TaskAttachmentInput[];
 }): Promise<TaskJobData> {
 	const id = `task_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+	const stagedAttachments = stageUploadedAttachments(id, data.attachments);
 	const jobData: TaskJobData = {
 		id,
 		workspace: data.workspace,
 		prompt: data.prompt,
 		provider: data.provider,
 		branch: data.branch,
+		attachments: stagedAttachments.length > 0 ? stagedAttachments : undefined,
 		status: 'queued',
 		createdAt: Date.now()
 	};

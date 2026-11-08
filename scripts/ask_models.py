@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 CLI Helper for Antigravity & Proxmox Codex Bridge
-Directly queries Proxmox LXC Container with Redis Job Queue & Fast Real-Time Status Polling.
+Directly queries Proxmox LXC Container with Redis Job Queue, Live Status Polling,
+and Full File Attachment Forwarding (PDF, DOCX, Images, Code/Text) to Codex & DeepSeek R1.
 Portable across any client machine (Windows, macOS, Linux).
 """
 
@@ -11,6 +12,8 @@ import os
 import re
 import json
 import time
+import base64
+import mimetypes
 import argparse
 import urllib.request
 import urllib.error
@@ -63,6 +66,62 @@ def get_headers(extra=None):
     return h
 
 
+def prepare_file_attachments(explicit_files: list, prompt_text: str) -> list:
+    """
+    Loads local files from explicit --file flags AND auto-detects any local file paths
+    mentioned in prompt_text so real files (PDF, DOCX, Images, Code) are always uploaded
+    to Proxmox Bridge for both OpenAI Codex and DeepSeek R1 to inspect directly.
+    """
+    candidate_paths = []
+    seen_realpaths = set()
+
+    if explicit_files:
+        for f in explicit_files:
+            if f:
+                candidate_paths.append(f.strip().strip('"').strip("'"))
+
+    # Auto-detect local paths mentioned inside prompt_text (e.g. C:\...\file.pdf or /path/to/file.pdf)
+    path_patterns = re.findall(
+        r'(?:[A-Za-z]:[\\/][^\r\n"\'<>|*?]+?\.(?:pdf|docx|txt|md|csv|json|py|ts|js|svelte|html|tex|png|jpe?g|webp|gif))'
+        r'|(?:/[^\s"\'<>|*?]+?\.(?:pdf|docx|txt|md|csv|json|py|ts|js|svelte|html|tex|png|jpe?g|webp|gif))',
+        prompt_text,
+        flags=re.IGNORECASE
+    )
+    for p in path_patterns:
+        candidate_paths.append(p.strip())
+
+    attachments = []
+    for raw_path in candidate_paths:
+        expanded = os.path.expanduser(raw_path)
+        if not os.path.isfile(expanded):
+            if explicit_files and raw_path in explicit_files:
+                log_print(f"[WARNING] Attached file not found: {raw_path}", file=sys.stderr)
+            continue
+
+        real_p = os.path.realpath(expanded)
+        if real_p in seen_realpaths:
+            continue
+        seen_realpaths.add(real_p)
+
+        try:
+            size = os.path.getsize(real_p)
+            if size > 45 * 1024 * 1024:
+                log_print(f"[WARNING] Skipping '{os.path.basename(real_p)}' (exceeds 45MB limit)", file=sys.stderr)
+                continue
+            with open(real_p, 'rb') as bf:
+                b64_data = base64.b64encode(bf.read()).decode('ascii')
+            mime_type, _ = mimetypes.guess_type(real_p)
+            attachments.append({
+                "name": os.path.basename(real_p),
+                "mimeType": mime_type or "application/octet-stream",
+                "contentBase64": b64_data
+            })
+        except Exception as e:
+            log_print(f"[WARNING] Could not read file '{real_p}': {e}", file=sys.stderr)
+
+    return attachments
+
+
 def extract_clean_body(raw: str) -> str:
     """
     Strips Codex CLI stderr trace ('OpenAI Codex v0.xxx ... -------- ... user ... codex ... tokens used')
@@ -85,10 +144,8 @@ def extract_clean_body(raw: str) -> str:
     if codex_banner:
         before_banner = text[:codex_banner.start()].strip()
         if before_banner:
-            # stdout is already cleanly before the stderr banner!
             return before_banner
 
-        # Otherwise extract after the last '\ncodex\n' marker in stderr
         stderr_block = text[codex_banner.start():]
         markers = list(re.finditer(r"(?:^|\n)codex\r?\n", stderr_block))
         if markers:
@@ -148,12 +205,23 @@ def stream_or_poll_task(task_id: str, base_url: str):
     raise TimeoutError(f"Task {task_id} timed out waiting for completion")
 
 
-def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode: bool = False, task_url: str = DEFAULT_BRIDGE_URL):
+def query_bridge(
+    provider: str,
+    prompt: str,
+    workspace: str = "temp",
+    sync_mode: bool = False,
+    task_url: str = DEFAULT_BRIDGE_URL,
+    attachments: list = None
+):
     payload = {
         "provider": provider,
         "prompt": prompt,
         "workspace": workspace
     }
+    if attachments:
+        payload["attachments"] = attachments
+        names = ", ".join(f"{a['name']} ({round(len(a['contentBase64']) * 3 / 4 / 1024, 1)} KB)" for a in attachments)
+        log_print(f"📎 Uploading {len(attachments)} real file(s) to Proxmox Bridge for Codex & DeepSeek inspection: {names}")
 
     url = f"{task_url}?sync=true" if sync_mode else task_url
     base_url = get_base_url(task_url)
@@ -164,7 +232,7 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode:
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=30 if not sync_mode else 900) as resp:
+        with urllib.request.urlopen(req, timeout=60 if not sync_mode else 900) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if resp.status == 202 or (data.get("taskId") and data.get("status") == "queued"):
                 task_id = data["taskId"]
@@ -196,13 +264,14 @@ def query_bridge(provider: str, prompt: str, workspace: str = "temp", sync_mode:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Proxmox Codex Bridge Multi-Agent Runner (Redis Queue & Live Polling)")
+    parser = argparse.ArgumentParser(description="Proxmox Codex Bridge Multi-Agent Runner (Redis Queue, Live Polling & Real File Upload)")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--consensus", action="store_true", help="Run Multi-Agent Consensus Loop (Proposals -> Peer Review -> Harmonization)")
     group.add_argument("--both", action="store_true", help="Query both Codex and DeepSeek R1 concurrently (Isolated Git Worktrees)")
     group.add_argument("--codex", action="store_true", help="Query Codex (ChatGPT Plus: gpt-6.1-sol) only")
     group.add_argument("--deepseek", action="store_true", help="Query DeepSeek R1 (14b GPU) only")
 
+    parser.add_argument("--file", "-f", action="append", default=[], help="Attach real local file(s) (PDF, DOCX, Images, Code) to upload to Proxmox Bridge (can be specified multiple times)")
     parser.add_argument("--workspace", default="temp", help="Target workspace or 'temp' for auto temp")
     parser.add_argument("--sync", action="store_true", help="Run synchronously without Redis queue")
     parser.add_argument("--url", default=DEFAULT_BRIDGE_URL, help="Custom Proxmox Bridge Task URL (default: http://192.168.5.159:3000/api/task or PROXMOX_BRIDGE_URL)")
@@ -219,11 +288,13 @@ def main():
         provider = "deepseek"
 
     prompt_text = args.prompt
-    if os.path.isfile(args.prompt):
+    if os.path.isfile(args.prompt) and not args.prompt.lower().endswith(('.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp', '.gif')):
         with open(args.prompt, 'r', encoding='utf-8') as pf:
             prompt_text = pf.read()
 
-    res = query_bridge(provider, prompt_text, args.workspace, sync_mode=args.sync, task_url=args.url)
+    attachments = prepare_file_attachments(args.file, prompt_text)
+
+    res = query_bridge(provider, prompt_text, args.workspace, sync_mode=args.sync, task_url=args.url, attachments=attachments)
     base_url = get_base_url(args.url)
     tok = res.get("tokens") or {}
     tot_tok = tok.get("total_tokens", 0)

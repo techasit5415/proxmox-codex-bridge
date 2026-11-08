@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { History, RotateCcw, Search, Plus, RefreshCw, Clock, Layers, Folder, Terminal, X } from 'lucide-svelte';
+	import { History, RotateCcw, Search, Plus, RefreshCw, Clock, Layers, Folder, Terminal, X, Paperclip } from 'lucide-svelte';
 	import type { TaskRecord, TaskJobData } from '../types';
 	import { fmtTokens, getNetTokens } from '../types';
 
@@ -286,9 +286,20 @@
 				class="w-full text-left p-2.5 rounded-lg text-xs transition-colors border flex flex-col gap-1 cursor-pointer {selectedTaskId === item.id ? 'bg-zinc-800/90 border-zinc-600 text-zinc-100 shadow-xs' : 'bg-zinc-950/40 border-zinc-850 text-zinc-400 hover:bg-zinc-850/50 hover:text-zinc-200'}"
 			>
 				<div class="flex items-center justify-between font-mono text-[10px]">
-					<span class="px-1.5 py-0.2 rounded font-medium {badge.class}">
-						{badge.label}
-					</span>
+					<div class="flex items-center gap-1">
+						<span class="px-1.5 py-0.2 rounded font-medium {badge.class}">
+							{badge.label}
+						</span>
+						{#if item.attachments && item.attachments.length > 0}
+							<span
+								class="px-1.5 py-0.2 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/40 flex items-center gap-1"
+								title={item.attachments.map(a => a.name).join(', ')}
+							>
+								<Paperclip class="size-2.5" strokeWidth={1.5} />
+								<span>{item.attachments.length} ไฟล์</span>
+							</span>
+						{/if}
+					</div>
 					<span class="text-zinc-500">{formatTime(item.timestamp)}</span>
 				</div>
 				<div class="text-[11px] line-clamp-2 text-zinc-200 font-sans leading-snug">

@@ -75,12 +75,27 @@ export interface ConsensusData {
 
 export type TaskJobStatus = 'queued' | 'running' | 'validating' | 'completed' | 'failed' | 'cancelled';
 
+export interface TaskAttachmentInput {
+	name: string;
+	mimeType?: string;
+	contentBase64: string;
+}
+
+export interface TaskAttachmentMeta {
+	name: string;
+	safeName: string;
+	mimeType?: string;
+	size: number;
+	stagedPath: string;
+}
+
 export interface TaskJobData {
 	id: string;
 	workspace: string;
 	prompt: string;
 	provider: string;
 	branch?: string;
+	attachments?: TaskAttachmentMeta[];
 	status: TaskJobStatus;
 	stage?: string;
 	createdAt: number;
@@ -114,6 +129,7 @@ export interface TaskRecord {
 	consensus?: ConsensusData;
 	testEvidence?: TestEvidence;
 	jobStatus?: TaskJobStatus;
+	attachments?: Array<{ name: string; size: number; mimeType?: string }>;
 }
 
 export interface AIModelConfig {

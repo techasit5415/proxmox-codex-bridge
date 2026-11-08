@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { Play, RefreshCw, Layers, Clock, Plus, GitBranch, Folder, GitMerge, X, Terminal } from 'lucide-svelte';
+	import { Play, RefreshCw, Layers, Clock, Plus, GitBranch, Folder, GitMerge, X, Paperclip, FileText, Image as ImageIcon } from 'lucide-svelte';
 	import { detectTaskType } from '../types';
-	import type { AIModelConfig } from '../types';
+	import type { AIModelConfig, TaskAttachmentInput } from '../types';
 
 	interface Props {
 		prompt: string;
 		branch: string;
 		provider: string;
+		attachments?: TaskAttachmentInput[];
 		activeWs?: string;
 		workspaces?: string[];
 		models?: AIModelConfig[];
@@ -21,6 +22,7 @@
 		prompt = $bindable(),
 		branch = $bindable(),
 		provider = $bindable(),
+		attachments = $bindable([]),
 		activeWs = 'all',
 		workspaces = [],
 		models = [],
@@ -32,6 +34,8 @@
 	}: Props = $props();
 
 	let showBranchInput = $state<boolean>(false);
+	let isDraggingOver = $state<boolean>(false);
+	let fileInputEl = $state<HTMLInputElement | null>(null);
 
 	let activeModels = $derived(models.filter(m => m.active));
 	let projectWorkspaces = $derived(workspaces.filter(w => !w.startsWith('temp-')));
@@ -42,9 +46,61 @@
 			onExecute();
 		}
 	}
+
+	function formatSize(b64: string): string {
+		const bytes = Math.round((b64.length * 3) / 4);
+		if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+	}
+
+	async function readFilesAsAttachments(fileList: FileList | null) {
+		if (!fileList || fileList.length === 0) return;
+		const newItems: TaskAttachmentInput[] = [];
+		for (const file of Array.from(fileList)) {
+			if (file.size > 40 * 1024 * 1024) {
+				alert(`ไฟล์ "${file.name}" มีขนาดเกิน 40MB`);
+				continue;
+			}
+			const b64 = await new Promise<string>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => {
+					const res = typeof reader.result === 'string' ? reader.result : '';
+					const clean = res.includes(',') ? res.split(',').pop() || '' : res;
+					resolve(clean);
+				};
+				reader.onerror = () => reject(reader.error);
+				reader.readAsDataURL(file);
+			});
+			newItems.push({
+				name: file.name,
+				mimeType: file.type || 'application/octet-stream',
+				contentBase64: b64
+			});
+		}
+		attachments = [...attachments, ...newItems].slice(0, 15);
+		if (fileInputEl) fileInputEl.value = '';
+	}
+
+	function removeAttachment(index: number) {
+		attachments = attachments.filter((_, idx) => idx !== index);
+	}
+
+	function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		isDraggingOver = false;
+		if (e.dataTransfer?.files?.length) {
+			readFilesAsAttachments(e.dataTransfer.files);
+		}
+	}
 </script>
 
-<div class="rounded-xl border border-zinc-800/90 bg-zinc-900/40 p-3.5 flex flex-col gap-3">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	ondragover={(e) => { e.preventDefault(); isDraggingOver = true; }}
+	ondragleave={() => { isDraggingOver = false; }}
+	ondrop={handleDrop}
+	class="rounded-xl border transition-colors p-3.5 flex flex-col gap-3 {isDraggingOver ? 'border-indigo-500 bg-indigo-950/20' : 'border-zinc-800/90 bg-zinc-900/40'}"
+>
 	{#if selectedTaskId}
 		<div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-800/60 border border-zinc-700/60 text-xs">
 			<div class="flex items-center gap-2 text-zinc-300">
@@ -152,13 +208,58 @@
 		bind:value={prompt}
 		onkeydown={handleKeydown}
 		rows="3"
-		placeholder="Ask a question, describe a change, or provide instructions... (⌘Enter to run)"
+		placeholder="Ask a question, describe a change, or drop files (PDF, DOCX, Images, Code) here... (⌘Enter to run)"
 		class="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 resize-y font-sans placeholder:text-zinc-500 leading-relaxed"
 	></textarea>
 
+	<!-- Attached Files Pills -->
+	{#if attachments.length > 0}
+		<div class="flex items-center gap-1.5 flex-wrap pt-0.5">
+			<span class="text-[11px] text-indigo-300 font-medium mr-1">ไฟล์แนบที่จะส่งให้โมเดลตรวจจริง ({attachments.length}):</span>
+			{#each attachments as att, idx}
+				{@const isImg = /\.(png|jpe?g|webp|gif)$/i.test(att.name)}
+				<div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-950/50 border border-indigo-500/40 text-indigo-200 text-[11px] font-mono">
+					{#if isImg}
+						<ImageIcon class="size-3 text-indigo-400 shrink-0" strokeWidth={1.5} />
+					{:else}
+						<FileText class="size-3 text-indigo-400 shrink-0" strokeWidth={1.5} />
+					{/if}
+					<span class="max-w-[200px] truncate" title={att.name}>{att.name}</span>
+					<span class="text-[10px] text-indigo-400/80">({formatSize(att.contentBase64)})</span>
+					<button
+						type="button"
+						onclick={() => removeAttachment(idx)}
+						class="text-indigo-400 hover:text-rose-400 transition-colors ml-0.5 cursor-pointer"
+						title="ลบไฟล์แนบ"
+					>
+						<X class="size-3" strokeWidth={1.5} />
+					</button>
+				</div>
+			{/each}
+		</div>
+	{/if}
+
 	<!-- Bottom Action Bar -->
 	<div class="flex items-center justify-between gap-3 pt-0.5 flex-wrap">
-		<div class="flex items-center gap-2">
+		<div class="flex items-center gap-2 flex-wrap">
+			<input
+				bind:this={fileInputEl}
+				type="file"
+				multiple
+				accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.ts,.js,.svelte,.html,.css,.tex,.log,.png,.jpg,.jpeg,.webp,.gif"
+				onchange={(e) => readFilesAsAttachments((e.currentTarget as HTMLInputElement).files)}
+				class="hidden"
+			/>
+			<button
+				type="button"
+				onclick={() => fileInputEl?.click()}
+				class="text-[11px] px-2.5 py-1 rounded-md bg-zinc-950 border border-zinc-800 hover:border-indigo-500/50 text-zinc-300 hover:text-indigo-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+				title="แนบไฟล์จริง (PDF, DOCX, รูปภาพ, โค้ด) เพื่อให้ทั้ง Codex และ DeepSeek ตรวจสอบจากไฟล์ต้นฉบับ"
+			>
+				<Paperclip class="size-3 text-indigo-400" strokeWidth={1.5} />
+				<span>แนบไฟล์ (PDF / รูป / โค้ด)</span>
+			</button>
+
 			<button
 				type="button"
 				onclick={() => (showBranchInput = !showBranchInput)}

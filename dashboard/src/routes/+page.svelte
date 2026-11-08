@@ -10,6 +10,7 @@
 		TokenStats,
 		AIModelConfig,
 		TaskJobData,
+		TaskAttachmentInput,
 		ProviderMode,
 		TaskBadgeType
 	} from '../lib/types';
@@ -44,6 +45,7 @@
 	let prompt = $state<string>('');
 	let branch = $state<string>('');
 	let provider = $state<ProviderMode>('codex');
+	let attachments = $state<TaskAttachmentInput[]>([]);
 	let isExecuting = $state<boolean>(false);
 	let taskBadge = $state<string>('Ready');
 	let taskBadgeType = $state<TaskBadgeType>('idle');
@@ -240,6 +242,7 @@
 		selectedTaskId = null;
 		prompt = '';
 		branch = '';
+		attachments = [];
 		singleResult = null;
 		dualCodex = null;
 		dualDeepSeek = null;
@@ -365,12 +368,20 @@
 
 		try {
 			const targetWs = (activeWs === 'all' || !activeWs) ? 'auto-temp' : activeWs;
+			const payloadAttachments = attachments.length > 0 ? attachments : undefined;
 			const res = await fetch('/api/task', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ workspace: targetWs, prompt, branch, provider })
+				body: JSON.stringify({
+					workspace: targetWs,
+					prompt,
+					branch,
+					provider,
+					attachments: payloadAttachments
+				})
 			});
 			const d = await res.json();
+			attachments = [];
 
 			if (res.status === 202 && d.taskId) {
 				// Immediately refresh status so Queue badge & History top card appear with 0ms delay!
@@ -615,6 +626,7 @@
 				bind:prompt 
 				bind:branch 
 				bind:provider 
+				bind:attachments
 				{activeWs}
 				{workspaces}
 				{models}

@@ -34,6 +34,7 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3000,
         HOST: '0.0.0.0',
+        BODY_SIZE_LIMIT: '50M',
         REDIS_HOST: '127.0.0.1',
         REDIS_PORT: 6379,
         ...envConfig

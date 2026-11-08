@@ -1,8 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { enqueueTask, getRedisClient, startTaskWorker } from '$lib/queue';
+import { enqueueTask, getRedisClient, startTaskWorker, stageUploadedAttachments } from '$lib/queue';
 import { executeTaskPipeline } from '$lib/taskRunner';
-import type { TaskJobData } from '$lib/types';
+import type { TaskJobData, TaskAttachmentInput } from '$lib/types';
 
 // Ensure worker is running
 startTaskWorker();
@@ -19,7 +19,13 @@ export const GET: RequestHandler = async () => {
 
 export const POST: RequestHandler = async ({ request, url }) => {
 	try {
-		const { workspace, prompt, branch, provider = 'codex' } = await request.json();
+		const { workspace, prompt, branch, provider = 'codex', attachments } = (await request.json()) as {
+			workspace?: string;
+			prompt?: string;
+			branch?: string;
+			provider?: string;
+			attachments?: TaskAttachmentInput[];
+		};
 		if (!prompt?.trim()) {
 			return json({ error: 'prompt is required' }, { status: 400 });
 		}
@@ -28,12 +34,15 @@ export const POST: RequestHandler = async ({ request, url }) => {
 
 		// If caller explicitly requested synchronous execution (e.g. legacy script)
 		if (isSync) {
+			const id = `task_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+			const stagedAttachments = stageUploadedAttachments(id, attachments);
 			const tempJob: TaskJobData = {
-				id: `task_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+				id,
 				workspace: workspace?.trim() || 'auto-temp',
 				prompt,
 				branch,
 				provider,
+				attachments: stagedAttachments.length > 0 ? stagedAttachments : undefined,
 				status: 'running',
 				createdAt: Date.now()
 			};
@@ -46,7 +55,8 @@ export const POST: RequestHandler = async ({ request, url }) => {
 			workspace: workspace?.trim() || 'auto-temp',
 			prompt,
 			provider,
-			branch
+			branch,
+			attachments
 		});
 
 		return json(
@@ -56,6 +66,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
 				status: job.status,
 				workspace: job.workspace,
 				provider: job.provider,
+				attachmentsCount: job.attachments?.length || 0,
 				message: 'Task successfully enqueued in Redis Job Queue'
 			},
 			{ status: 202 }
